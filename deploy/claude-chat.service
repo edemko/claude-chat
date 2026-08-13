@@ -1,0 +1,35 @@
+# systemd user unit for the claude-chat hub.
+#
+# Install:
+#   ln -sf ~/Dev/claude-chat/deploy/claude-chat.service ~/.config/systemd/user/claude-chat.service
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now claude-chat
+#   loginctl enable-linger openclaw      # survive logout
+#
+# Logs:  journalctl --user -u claude-chat -f
+[Unit]
+Description=claude-chat hub (mobile client for tmux-hosted Claude Code sessions)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/Dev/claude-chat
+# Absolute path: nvm's node is not on a non-interactive PATH.
+ExecStart=%h/.nvm/versions/node/v22.23.2/bin/node %h/Dev/claude-chat/dist/server.js
+Environment=NODE_ENV=production
+# Bind to Tailscale only. The server falls back to loopback if this is unavailable,
+# which fails closed rather than exposing the port.
+# Your Tailscale address — `tailscale ip -4`. Loopback until you set it.
+Environment=CC_HOST=127.0.0.1
+Environment=CC_PORT=7420
+Environment=CC_REPO_ROOTS=~/Dev
+Environment=CC_NTFY_URL=http://127.0.0.1:8080
+Environment=CC_NTFY_TOPIC=claude-sessions
+Restart=on-failure
+RestartSec=3
+# The hub shells out to tmux constantly; keep it from hogging a loaded box.
+Nice=5
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Claude sessions">
+  <rect width="512" height="512" fill="#0f1219"/>
+  <!-- Three session plates; the top one is live. -->
+  <g fill="none" stroke="#262e3b" stroke-width="14" stroke-linecap="round">
+    <path d="M150 200h236"/>
+    <path d="M150 266h180"/>
+    <path d="M150 332h206"/>
+  </g>
+  <circle cx="112" cy="200" r="24" fill="#ff8a5b"/>
+  <circle cx="112" cy="200" r="46" fill="none" stroke="#ff8a5b" stroke-opacity="0.28" stroke-width="10"/>
+  <circle cx="112" cy="266" r="18" fill="#262e3b"/>
+  <circle cx="112" cy="332" r="18" fill="#262e3b"/>
+</svg>

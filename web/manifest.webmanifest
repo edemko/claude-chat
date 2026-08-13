@@ -1,0 +1,14 @@
+{
+  "name": "Claude sessions",
+  "short_name": "Sessions",
+  "description": "Chat with the Claude Code sessions running on your servers",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f1219",
+  "theme_color": "#0f1219",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

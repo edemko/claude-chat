@@ -1,0 +1,329 @@
+# claude-chat
+
+Chat with the Claude Code sessions running on your servers, from your phone.
+
+One tmux-hosted session = one conversation. It exists to solve a narrow, real problem:
+typing into a terminal over SSH on Android is miserable, but talking to a coding agent is
+just messaging — so make it messaging, with a real keyboard, autocorrect and dictation.
+
+Sessions keep running when you close the app. They are ordinary `claude` processes in
+tmux, so you can attach to the same session from your laptop and carry on.
+
+```
+phone ──── HTTP + WebSocket over Tailscale ────►  hub (this repo, :7420)
+ chat list                                        ├─ discovery: tmux + /proc + transcripts
+ chat view, compose box, key bar                   ├─ stream:    tail -F → JSONL → events
+ screenshot upload                                 ├─ input:     tmux send-keys
+ ntfy app for push                                 └─ registry:  ~/.claude-chat/
+```
+
+Two clients, same API: a **PWA** served by the hub itself (no build step, updates on
+reload) and a **native Android app** in `flutter_client/`. The PWA is the one to start
+with.
+
+## What you need
+
+- A Linux/macOS machine running Claude Code sessions inside **tmux**
+- **Node 20+** on that machine (22 recommended)
+- **Tailscale**, or another private path from your phone to the machine — see
+  [Reaching it from your phone](#reaching-it-from-your-phone). Do not put this on a
+  public port.
+- A phone. Android for the native client; the PWA works on anything with a browser.
+
+## Setup
+
+```bash
+git clone https://github.com/edemko/claude-chat.git
+cd claude-chat
+npm install && npm run build
+```
+
+Bind it to your private address. `CC_HOST` defaults to loopback, so an unconfigured hub is
+not reachable from anywhere:
+
+```bash
+CC_HOST=$(tailscale ip -4) npm start
+```
+
+The startup log prints a URL containing the master token. That works on its own, but for
+day-to-day use set a password instead — you can remember one and type it on a new device:
+
+```bash
+npm run build                        # cc-user.mjs imports from dist/
+node scripts/cc-user.mjs set erik    # prompts twice, input hidden
+node scripts/cc-user.mjs list        # users and logged-in devices
+node scripts/cc-user.mjs logout-all  # revoke every device
+```
+
+Open `http://<your-tailscale-ip>:7420/` on the phone and sign in. Add it to the home
+screen and it behaves like an app.
+
+### Run it as a service
+
+```bash
+ln -sf "$PWD/deploy/claude-chat.service" ~/.config/systemd/user/claude-chat.service
+# Set CC_HOST in that file to your Tailscale address first.
+systemctl --user daemon-reload && systemctl --user enable --now claude-chat
+loginctl enable-linger "$USER"        # survive logout
+journalctl --user -u claude-chat -f
+```
+
+### Configuration
+
+| Env | Default | Meaning |
+|---|---|---|
+| `CC_HOST` | `127.0.0.1` | Bind address. Set to your Tailscale address. **Never `0.0.0.0`.** Falls back to loopback if the address is unavailable — fails closed. |
+| `CC_PORT` | `7420` | |
+| `CC_DIR` | `~/.claude-chat` | State: token, users, sessions, pane→transcript registry, uploads. |
+| `CC_REPO_ROOTS` | `~/Dev` | Comma-separated roots scanned for git repos in the create-session picker. |
+| `CC_TOKEN` | generated | Master bearer token; otherwise read from `$CC_DIR/token` (0600). |
+| `CC_NTFY_URL` / `CC_NTFY_TOPIC` | `http://127.0.0.1:8080` / `claude-sessions` | Used by the notification hook. |
+| `CC_NTFY_LABEL` | *(empty)* | Prefixed to notification titles. Set per host once more than one hub publishes to a topic. |
+| `CC_APP_URL` | `http://127.0.0.1:7420/` | Where tapping a notification goes. Set per host. |
+
+### Reaching it from your phone
+
+**The bind address is the security boundary.** Any credential here is effectively shell
+access to the machine, so the port must not be reachable from the internet. In order of
+preference:
+
+1. **Tailscale** (what this is built for) — `CC_HOST=$(tailscale ip -4)`, no inbound
+   firewall rule, nothing public. `tailscale serve` on top gives a real Let's Encrypt
+   certificate on your `*.ts.net` name, which is worth doing.
+2. **Cloudflare Tunnel** — bind to `127.0.0.1`, point `cloudflared` at it. Real HTTPS, no
+   open ports. Put Cloudflare Access in front for a second auth layer.
+3. **SSH port-forward** — `ssh -L 7420:127.0.0.1:7420 you@host`, hub on loopback. Most
+   conservative; least convenient on a phone, since Android kills backgrounded tunnels.
+4. **A public port.** Don't.
+
+### Push notifications (optional)
+
+```bash
+cd deploy && docker compose -f ntfy-compose.yml up -d   # set the bind address first
+```
+
+Then point Claude Code's `Stop` and `Notification` hooks at `scripts/cc-notify.py` in
+`~/.claude/settings.json`:
+
+```json
+"hooks": {
+  "Stop": [{ "hooks": [{ "type": "command",
+    "command": "python3 /path/to/claude-chat/scripts/cc-notify.py Stop" }] }],
+  "Notification": [{ "hooks": [{ "type": "command",
+    "command": "python3 /path/to/claude-chat/scripts/cc-notify.py Notification" }] }]
+}
+```
+
+Hooks fire in-process with Claude Code, so `cc-notify.py` always exits 0 and never blocks
+a session. Subscribe the ntfy Android app to the server address and topic.
+
+With **more than one hub**, publish to the same ntfy and topic so the phone keeps one
+subscription, and set two variables per host — in the hook command itself, not the
+environment, because hooks inherit whatever started Claude Code and a tmux-launched
+session is a non-interactive login shell:
+
+```json
+"command": "CC_NTFY_URL=http://<ntfy-host>:8080 CC_NTFY_LABEL=staging CC_APP_URL=http://staging.example.ts.net:7420/ python3 …/cc-notify.py Stop"
+```
+
+`CC_NTFY_LABEL` prefixes the title (`staging · b2b-miner`); `CC_APP_URL` decides which hub
+a tap opens. Without the second one, every notification opens whichever host is the
+default.
+
+## Using it
+
+- **Sessions list** — one row per tmux pane running `claude`, repo name first, with a
+  breathing dot while a session is mid-turn.
+- **New session** — pick a repo from `CC_REPO_ROOTS`; the hub launches
+  `claude --session-id <uuid>` in a fresh tmux session.
+- **Chat** — messages and expandable tool chips. Markdown, with bold and italic in their
+  own colours. Long-press a message to copy it.
+- **Key bar** — `esc`, `^C`, arrows, `tab`, `enter`, plus `screen` (peek at the raw pane)
+  and `conversation` (fix a wrong transcript match).
+- **Screenshot** — 🖼 sends an image; whatever is in the compose box becomes its caption.
+- **ⓘ** — model, effort, context tokens, branch, turn counts, uptime, and the pane's own
+  status line scraped verbatim.
+- **☰** — server browser. Add another hub and it keeps both, each with its own login.
+
+## How it works
+
+**Reading** — `~/.claude/projects/<slug>/<uuid>.jsonl` is already a structured chat log,
+so nothing here emulates a terminal. Records become message bubbles and tool chips. No
+ANSI parsing anywhere. Reasoning blocks are dropped: the chat shows what a normal Claude
+Code session prints.
+
+**Paged history** — `GET …/history?limit=&before=` returns the *newest* page plus a
+`cursor`, the byte offset of the oldest record returned. Opening a chat reads ~48 KB from
+the end rather than converting a 2 MB transcript; both clients load older pages as you
+scroll up. Cursors are byte offsets at record boundaries, computed with
+`Buffer.byteLength` because transcripts are not ASCII.
+
+**Session names** — `/rename` writes a `custom-title` record; the automatic titler writes
+`ai-title`. Claude Code emits **both on every turn, with `ai-title` after**, so "whichever
+is later wins" silently discards the rename. A custom title therefore outranks the
+automatic one regardless of position.
+
+**Writing** — `tmux send-keys` into the live pane, so the running session keeps its full
+context. Multi-line text goes through `load-buffer` + `paste-buffer -p` so newlines don't
+submit early. Every send re-checks that the pane is still running claude — otherwise the
+text would land in a shell prompt and execute.
+
+**Creating** — `tmux new-session -d -c <dir> "zsh -lc 'claude --session-id <uuid>'"`.
+Generating the uuid up front makes the pane→transcript mapping exact by construction.
+
+**Screenshots** — Claude Code is handed an image by being given a *path*, so the hub
+writes the upload on the machine the session runs on and types that path into the pane.
+`Content-Type` is a claim, so the leading bytes are checked against it; the write is
+confirmed with `stat` before the path is sent.
+
+**Multi-server, two ways** — different axes, both present:
+
+1. *Client-side*: each client keeps its own list of hubs, each with its own login. The ☰
+   menu adds one. This is the one to use for other machines — each runs its own hub.
+2. *Hub-side*: one hub reaching other machines over SSH, behind the `Executor` interface in
+   `src/exec.ts`. Add an entry to `$CC_DIR/servers.json`:
+
+```json
+[
+  { "id": "sam",   "label": "sam (local)", "kind": "local" },
+  { "id": "other", "label": "other box",   "kind": "ssh", "host": "other.example" }
+]
+```
+
+Note: the clients currently read only the **first** entry of the hub-side list, so option 2
+needs a server picker that does not exist yet. Option 1 works fully.
+
+## The hard part: which transcript belongs to which pane
+
+For sessions this app creates, the answer is exact — it chose the uuid. For sessions that
+were already running, it genuinely cannot be known for certain. A session can be
+`--resume`d into an older transcript, `/clear`ed into a new one, and have its model
+switched mid-conversation. No process holds the `.jsonl` open, so there is no fd to
+inspect.
+
+So the resolver ranks evidence and is honest about the result:
+
+| `confidence` | Meaning |
+|---|---|
+| `exact` | Launched with `--session-id`, or you pinned it, or birth-time **and** on-screen content agree |
+| `strong` | Transcript created within 120 s of the process starting, or its recent text is on the pane's screen |
+| `weak` | A guess. The UI says so and offers a picker |
+| `pending` | No transcript exists yet — the session has not been spoken to |
+
+Birth-time ranks above screen content: it is mechanical and precise, while a screen match
+is fuzzy enough that one coincidental line let a pane steal another's transcript. Stub
+transcripts (< 8 KB, usually abandoned by an immediate `/resume`) are never chosen as a
+fallback. Only a transcript **modified since the pane's claude started** can be the one it
+is writing — without that rule a freshly opened session inherited the previous
+conversation in the same repo, name and history included. Any pane can be pinned from the
+**conversation** button, and the choice persists.
+
+## Security
+
+**The bind address is the real control**: private-network only, never `0.0.0.0`, no public
+port. Everything below is defence in depth rather than the boundary.
+
+Two credential types, both compared in constant time:
+
+| | |
+|---|---|
+| **Session token** | Minted by `POST /api/login` from a username and password. 32 random bytes, stored on the device, revocable per device, 90-day idle expiry. Only its SHA-256 is written to `sessions.json`, so that file is not itself a key. |
+| **Master token** | `$CC_DIR/token` (0600), generated on first run. Not revocable and does not expire — it exists for scripts and the APK download link. Delete the file and restart to rotate. |
+
+Passwords are hashed with scrypt (N=16384, r=8, 64-byte key, per-user random salt) in
+`users.json` (0600). A wrong password and an unknown username return an identical 401 and
+both pay the full scrypt cost, so neither response nor timing reveals whether an account
+exists. Five failures triggers an escalating lockout.
+
+`/api/login` and `/api/auth-mode` are the only endpoints reachable without a credential.
+`/api` sends `Access-Control-Allow-Origin: *`, which is safe *here specifically* because
+authentication is a bearer token in a header, never a cookie: the browser attaches nothing
+automatically, and a hostile page cannot read another origin's stored token. It exists so
+a PWA served by one hub can be pointed at another. Were this cookie-based it would be a
+hole — and for the same reason CSRF is not a vector.
+
+Deliberately **not** here: TLS (use `tailscale serve` or a tunnel), per-user authorisation
+(any account can drive any session), and audit logging beyond a line per login.
+
+**Sessions created from the app default to `--dangerously-skip-permissions`** (a toggle in
+the create sheet). That means a phone can run unattended commands on the server. Decide
+whether you want that before pointing this at anything you care about.
+
+## Development
+
+```bash
+npm run build          # tsc
+npm run typecheck
+node scripts/test-discovery.mjs    # dedupe + status-line scraping, no server needed
+node scripts/test-markdown.mjs     # markdown renderer against a DOM stub
+node scripts/smoke-ws.mjs          # end-to-end live stream, throwaway session
+```
+
+The PWA in `web/` has no build step — edit and reload. Bump `CACHE` in `web/sw.js` so the
+service worker picks up a change.
+
+Android client:
+
+```bash
+scripts/build-apk.sh          # test, build, stamp the version in, publish
+scripts/build-apk.sh --no-publish
+```
+
+That script is the supported path. It passes the pubspec version and a UTC build time via
+`--dart-define`, then greps the compiled Dart snapshot to prove the stamp is really there
+before publishing — a mistyped flag would otherwise ship an APK labelled `dev build`. The
+stamp shows in the drawer footer and the ⓘ sheet, which is the only way to tell which
+build a phone is running when the APK is delivered by file sync.
+
+Three Android details that would each have silently broken a release build:
+
+- `INTERNET` is only in the **debug** manifest by default, so a release APK would have
+  had no network at all.
+- Cleartext HTTP is blocked from API 28. `network_security_config.xml` permits it for
+  `*.ts.net` and loopback specifically, not globally. A bare IP needs its own entry.
+- Flutter's template signs release builds with the **debug** key. Use a real release key
+  configured via `android/key.properties` (gitignored) and **keep it** — Android refuses
+  an update signed with a different key.
+
+## Gotchas discovered the hard way
+
+- The transcript file appears on the **first message**, not at session start — a brand-new
+  session must still be listable, or it is unreachable by `send`.
+- `zsh -lc claude` **exec's** into claude, so for app-created sessions the pane's own
+  process *is* claude; there is no child to find under `pane_pid`.
+- If `claude` is on `PATH` only via `.zshrc`, a tmux-launched `zsh -lc claude` will not
+  find it — `.zshrc` is for interactive shells. Put it in `.zprofile`.
+- The directory trust prompt blocks startup and `--dangerously-skip-permissions` does
+  **not** skip it. The hub detects and answers it, which is only acceptable because the
+  directory came from the user's own picker.
+- Don't key caches on a process start time derived from `ps -o etimes` — whole seconds,
+  jitters ±1 s, silently breaks every lookup. Key on pid.
+- Never `pkill node` on a box running Claude Code; every session is a node process. And
+  `pkill -f dist/server.js` matches your own shell — use `lsof -ti tcp:7420`.
+
+## Layout
+
+```
+src/exec.ts        Executor interface, LocalExecutor, SshExecutor
+src/proc.ts        one-round-trip probe: clock, home, panes, process table
+src/discovery.ts   pane→transcript resolution, confidence, dedupe, manual bind
+src/transcript.ts  slug rules, JSONL parsing, record→chat-event mapping
+src/stream.ts      ref-counted `tail -F` per transcript, coalesced batches
+src/input.ts       send-keys, bracketed paste, key whitelist, not-claude guard
+src/create.ts      --session-id launch, trust prompt, startup settle, repo picker
+src/info.ts        the ⓘ sheet: scraped status line + transcript-derived facts
+src/upload.ts      screenshots: magic-byte check, write on the session's machine
+src/auth.ts        scrypt passwords, session tokens, lockout
+src/server.ts      HTTP + WebSocket, token auth, static PWA
+web/               the PWA (vanilla, no build step)
+web/markdown.js    DOM-building markdown renderer (never innerHTML)
+flutter_client/    native Android client against the same API
+scripts/           notification hook, APK build/publish, headless tests
+deploy/            systemd user unit, ntfy compose
+```
+
+## Status
+
+Personal tool, published because it might be useful. It works and is in daily use, but it
+is shaped by one person's setup — expect rough edges outside the paths described above.
+Issues and PRs welcome; no support promised.

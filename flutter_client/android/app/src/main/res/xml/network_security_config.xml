@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The hub speaks plain HTTP on a private address. Android blocks cleartext from
+  API 28, so it has to be permitted explicitly — but per host, never globally.
+
+  What is permitted here:
+    *.ts.net    Tailscale MagicDNS names, i.e. `<machine>.<tailnet>.ts.net`.
+                Reaching the hub by its MagicDNS name rather than its raw
+                100.x.y.z address means this file needs no per-tailnet edit.
+    127.0.0.1   on-device testing
+    10.0.2.2    the host machine as seen from the Android emulator
+
+  If you must use a bare Tailscale IP instead of a name, add it as its own
+  <domain> entry — an IP literal is not covered by any wildcard.
+
+  The way to drop this exemption entirely is `tailscale serve`, which fronts the
+  hub with a real Let's Encrypt certificate on *.ts.net. Then the app talks HTTPS
+  and no cleartext is permitted at all.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">ts.net</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

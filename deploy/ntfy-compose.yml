@@ -1,0 +1,36 @@
+# Push notifications for Claude sessions.
+#
+# Bound to the Tailscale address only — never the public interface. That bind is the
+# security control, so the server itself can stay open to the tailnet without auth.
+# Subscribe from the ntfy Android app: server http://<tailscale-ip>:8080, topic
+# claude-sessions.
+services:
+  ntfy:
+    image: binwiederhier/ntfy:v2.11.0
+    container_name: ntfy
+    command: serve
+    environment:
+      NTFY_BASE_URL: http://127.0.0.1:8080   # change to http://<tailscale-ip>:8080
+      NTFY_LISTEN_HTTP: ":80"
+      NTFY_CACHE_FILE: /var/cache/ntfy/cache.db
+      NTFY_CACHE_DURATION: 48h
+      NTFY_ATTACHMENT_CACHE_DIR: ""
+      # Keep the footprint small on a box where memory is the scarce resource.
+      NTFY_KEEPALIVE_INTERVAL: 45s
+    ports:
+      # Replace with your Tailscale address to reach ntfy from a phone.
+      - "127.0.0.1:8080:80"
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+      - ntfy-etc:/etc/ntfy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost/v1/health | grep -Eo '\"healthy\"\\s*:\\s*true'"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  ntfy-cache:
+  ntfy-etc:

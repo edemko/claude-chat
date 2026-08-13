@@ -1,0 +1,38 @@
+# --- build output -----------------------------------------------------------
+node_modules/
+dist/
+*.tsbuildinfo
+
+# --- logs, editors, OS ------------------------------------------------------
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# --- secrets ----------------------------------------------------------------
+# The hub keeps its state in ~/.claude-chat/ by default, so none of this is
+# normally in the tree. These rules exist because CC_DIR can point anywhere: run
+# the hub with it set inside the repo and the next `git add .` would otherwise
+# commit a bearer token that is shell-equivalent access to the machine.
+.env
+.env.*
+token
+users.json
+sessions.json
+registry.json
+servers.json
+uploads/
+
+# Android release signing. The keystore and its passwords must never be
+# published — but must also never be lost: an update signed with a different key
+# is refused by Android, so the app can only be replaced by uninstalling it.
+*.jks
+*.keystore
+key.properties
+
+# --- scratch ----------------------------------------------------------------
+*.apk
+tmp/

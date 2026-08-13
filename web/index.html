@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- interactive-widget keeps the composer above the on-screen keyboard, which is the
+     whole point of this app. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#0f1219">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Claude sessions</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.svg">
+<link rel="stylesheet" href="/style.css">
+<script>
+  /* Applied before first paint so a forced theme doesn't flash the other one.
+     "system" stores nothing and leaves the CSS media query in charge. */
+  try {
+    var saved = localStorage.getItem('cc-theme');
+    if (saved === 'light' || saved === 'dark') {
+      document.documentElement.setAttribute('data-theme', saved);
+    }
+  } catch (e) { /* private mode: fall back to system */ }
+</script>
+</head>
+<body>
+
+<!-- Sign in -->
+<section id="screen-login" class="screen">
+  <div class="login">
+    <h1>Claude sessions</h1>
+    <p class="login-sub" id="login-sub">Sign in to the hub.</p>
+    <!-- A real form so Android offers a "go" key and password managers fill it. -->
+    <form id="login-form" autocomplete="on">
+      <input id="login-user" name="username" type="text" placeholder="Username"
+             autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false">
+      <input id="login-pass" name="password" type="password" placeholder="Password"
+             autocomplete="current-password">
+      <button id="login-submit" type="submit">Sign in</button>
+    </form>
+    <p id="login-error" class="login-error"></p>
+  </div>
+</section>
+
+<!-- Session list -->
+<section id="screen-list" class="screen is-active">
+  <header class="topbar">
+    <button id="btn-menu" class="iconbtn" aria-label="Servers">☰</button>
+    <button class="topbar-titles" id="btn-account" type="button">
+      <h1>Sessions</h1>
+      <span id="server-label" class="meta sub">connecting…</span>
+    </button>
+    <button id="btn-theme" class="iconbtn" aria-label="Change theme">◐</button>
+    <button id="btn-refresh" class="iconbtn" aria-label="Refresh sessions">⟳</button>
+    <button id="btn-new" class="iconbtn" aria-label="New session">＋</button>
+  </header>
+  <div id="session-list" class="scroll"></div>
+</section>
+
+<!-- Chat -->
+<section id="screen-chat" class="screen">
+  <header class="topbar">
+    <button id="btn-back" class="iconbtn" aria-label="Back to sessions">‹</button>
+    <div class="topbar-titles">
+      <h1 id="chat-title">…</h1>
+      <span id="chat-meta" class="meta sub"></span>
+    </div>
+    <button id="btn-info" class="iconbtn" aria-label="Session info" title="Session info">ⓘ</button>
+    <span id="chat-bead" class="bead"></span>
+  </header>
+  <div id="chat-notice"></div>
+  <div id="thread-scroll" class="scroll">
+    <div id="thread" class="thread"></div>
+  </div>
+  <div class="composer">
+    <div class="keybar">
+      <button class="key" data-key="escape">esc</button>
+      <button class="key" data-key="ctrl-c">^C</button>
+      <button class="key" data-key="up">↑</button>
+      <button class="key" data-key="down">↓</button>
+      <button class="key" data-key="tab">⇥</button>
+      <button class="key" data-key="shift-tab">⇧⇥</button>
+      <button class="key" data-key="enter">⏎</button>
+      <button class="key" id="btn-peek">screen</button>
+      <button class="key" id="btn-pick">conversation</button>
+    </div>
+    <div class="compose-row">
+      <textarea id="compose" rows="1" placeholder="Message this session…"
+                autocapitalize="sentences" autocorrect="on" spellcheck="true"></textarea>
+      <!-- Screenshot. On Android this opens the system picker, which offers recent
+           screenshots first, so it is two taps from taking one to sending it. -->
+      <input id="pick-image" type="file" accept="image/png,image/jpeg,image/webp" hidden>
+      <button id="btn-image" class="iconbtn compose-icon" aria-label="Send a screenshot"
+              title="Send a screenshot">🖼</button>
+      <button id="btn-send" class="send" aria-label="Send message" disabled>↑</button>
+    </div>
+  </div>
+</section>
+
+<!-- New session -->
+<div id="sheet" class="sheet">
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <h2>New session</h2>
+      <button id="btn-sheet-close" class="iconbtn" aria-label="Close">✕</button>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="skip-perms" checked>
+      <span>Skip permission prompts — the session acts without asking</span>
+    </label>
+    <div id="dir-list" class="scroll"></div>
+  </div>
+</div>
+
+<!-- Correct a bad pane-to-transcript match -->
+<div id="pick-sheet" class="sheet">
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <h2>Which conversation?</h2>
+      <button id="btn-pick-close" class="iconbtn" aria-label="Close">✕</button>
+    </div>
+    <div id="pick-list" class="scroll"></div>
+  </div>
+</div>
+
+<!-- Session info -->
+<div id="info-sheet" class="sheet">
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <h2 id="info-title">Session</h2>
+      <button id="btn-info-close" class="iconbtn" aria-label="Close">✕</button>
+    </div>
+    <div id="info-body" class="scroll"></div>
+  </div>
+</div>
+
+<!-- Server browser -->
+<div id="drawer" class="drawer">
+  <div class="drawer-panel">
+    <div class="drawer-head">
+      <h2>Servers</h2>
+      <button id="btn-drawer-close" class="iconbtn" aria-label="Close">✕</button>
+    </div>
+    <div id="conn-list" class="scroll"></div>
+    <div class="drawer-foot">
+      <button id="btn-add-server" type="button">Add a server</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add a server -->
+<div id="add-sheet" class="sheet">
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <h2>Add a server</h2>
+      <button id="btn-add-close" class="iconbtn" aria-label="Close">✕</button>
+    </div>
+    <form id="add-form" class="add-form" autocomplete="on">
+      <input id="add-label" type="text" placeholder="Name (optional)" autocapitalize="words">
+      <div class="add-row">
+        <input id="add-host" type="text" placeholder="host or 100.x.y.z"
+               autocapitalize="none" autocorrect="off" spellcheck="false">
+        <input id="add-port" type="text" placeholder="7420" inputmode="numeric">
+      </div>
+      <input id="add-user" type="text" placeholder="Username" autocomplete="username"
+             autocapitalize="none" autocorrect="off" spellcheck="false">
+      <input id="add-pass" type="password" placeholder="Password" autocomplete="current-password">
+      <button id="add-submit" type="submit">Sign in and save</button>
+      <p id="add-error" class="login-error"></p>
+    </form>
+  </div>
+</div>
+
+<!-- Account -->
+<div id="account-sheet" class="sheet">
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <h2>Account</h2>
+      <button id="btn-account-close" class="iconbtn" aria-label="Close">✕</button>
+    </div>
+    <div id="account-body"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="/app.js" type="module"></script>
+</body>
+</html>
