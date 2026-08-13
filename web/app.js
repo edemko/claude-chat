@@ -1474,6 +1474,8 @@ function promptNewFolder() {
   input.focus();
 }
 
+// Home is the entry point: the quick list already covers configured roots, so
+// browsing is for everything else.
 $('btn-browse').addEventListener('click', () => openBrowse('~'));
 $('btn-mkdir').addEventListener('click', promptNewFolder);
 $('btn-start-here').addEventListener('click', () => {
