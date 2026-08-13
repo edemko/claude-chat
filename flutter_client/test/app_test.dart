@@ -7,6 +7,7 @@ import 'package:claude_chat/screens/sessions_screen.dart';
 import 'package:claude_chat/store.dart';
 import 'package:claude_chat/theme.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -262,6 +263,52 @@ void main() {
       final code = spanWith(tester, 'npm test');
       expect(code.style!.fontFamily, monoFamily);
       expect(code.style!.backgroundColor, CcColors.dark.codeBg);
+    });
+
+    testWidgets('a fenced block carries a copy button', (tester) async {
+      // Dragging a selection over several lines on a phone is hopeless, so this
+      // button is the only practical way code leaves a chat.
+      await tester.pumpWidget(host(
+        const MarkdownView(text: '```sh\nnpm run build\n```'),
+      ));
+      expect(find.text('copy'), findsOneWidget);
+    });
+
+    testWidgets('tapping the copy button copies the code and confirms', (tester) async {
+      // Intercept the platform clipboard so what actually gets copied is asserted,
+      // not merely that a callback fired.
+      final copiedToClipboard = <String>[];
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') {
+            copiedToClipboard.add((call.arguments as Map)['text'] as String);
+          }
+          return null;
+        },
+      );
+      addTearDown(() => tester.binding.defaultBinaryMessenger
+          .setMockMethodCallHandler(SystemChannels.platform, null));
+
+      final announced = <String>[];
+      await tester.pumpWidget(host(
+        MarkdownView(
+          text: '```sh\nnpm run build\n```',
+          onCopied: announced.add,
+        ),
+      ));
+      await tester.tap(find.text('copy'));
+      // Not pumpAndSettle: that would run the 1600 ms reset timer and put the label
+      // back to "copy" before it could be checked.
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(copiedToClipboard, ['npm run build']);
+      expect(announced, ['Code copied']);
+      expect(find.text('copied'), findsOneWidget);
+
+      // Let the reset timer run, so the label returns and no timer outlives the test.
+      await tester.pump(const Duration(milliseconds: 1700));
+      expect(find.text('copy'), findsOneWidget);
     });
 
     testWidgets('a fenced block keeps markup literal', (tester) async {

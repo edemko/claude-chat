@@ -929,6 +929,69 @@ async function sendMessage() {
 
 $('btn-send').addEventListener('click', sendMessage);
 
+/* ---------- copy ---------- */
+
+/**
+ * Copy text to the clipboard.
+ *
+ * `navigator.clipboard` only exists in a secure context, and this app is served over
+ * plain HTTP on a private address — so on the very deployment it is built for, the
+ * modern API is simply absent. The deprecated execCommand path is the one that
+ * actually runs; without it every copy button would silently do nothing.
+ */
+async function copyText(text) {
+  if (!text) return false;
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // Denied or unavailable — fall through rather than give up.
+  }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    // Off-screen but focusable: execCommand ignores a hidden or detached element.
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, ta.value.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * One delegated listener for every copy affordance in the thread, so markdown.js
+ * stays a pure renderer and re-rendered messages need no rebinding.
+ */
+$('thread').addEventListener('click', async (e) => {
+  const button = e.target.closest?.('[data-copy="block"]');
+  if (button) {
+    const pre = button.parentElement?.querySelector('pre');
+    const ok = await copyText(pre?.textContent ?? '');
+    button.textContent = ok ? 'copied' : 'failed';
+    setTimeout(() => { button.textContent = 'copy'; }, 1600);
+    return;
+  }
+
+  const inline = e.target.closest?.('code[data-copy="inline"]');
+  // Not when it is part of a link: the tap belongs to the link.
+  if (inline && !inline.closest('a')) {
+    const ok = await copyText(inline.textContent ?? '');
+    toast(ok ? 'Copied' : 'Could not copy', !ok);
+    inline.classList.add('is-copied');
+    setTimeout(() => inline.classList.remove('is-copied'), 600);
+  }
+});
+
 /* ---------- screenshots ---------- */
 
 const IMAGE_TYPES = {

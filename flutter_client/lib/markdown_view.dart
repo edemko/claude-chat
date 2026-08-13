@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:url_launcher/url_launcher.dart';
 
@@ -16,6 +19,7 @@ class MarkdownView extends StatelessWidget {
     required this.text,
     this.onYou = false,
     this.baseStyle,
+    this.onCopied,
   });
 
   final String text;
@@ -24,6 +28,11 @@ class MarkdownView extends StatelessWidget {
   final bool onYou;
   final TextStyle? baseStyle;
 
+  /// Called after a copy affordance has put something on the clipboard, so the
+  /// host screen can confirm it. The copy itself happens here regardless — a
+  /// button that only works when a callback is supplied would be a trap.
+  final void Function(String label)? onCopied;
+
   @override
   Widget build(BuildContext context) {
     final nodes = md.Document(
@@ -31,7 +40,12 @@ class MarkdownView extends StatelessWidget {
       encodeHtml: false,
     ).parseLines(text.replaceAll('\r\n', '\n').split('\n'));
 
-    final builder = _Builder(context: context, onYou: onYou, baseStyle: baseStyle);
+    final builder = _Builder(
+      context: context,
+      onYou: onYou,
+      baseStyle: baseStyle,
+      onCopied: onCopied,
+    );
     final blocks = builder.blocks(nodes);
 
     return Column(
@@ -43,11 +57,24 @@ class MarkdownView extends StatelessWidget {
 }
 
 class _Builder {
-  _Builder({required this.context, required this.onYou, this.baseStyle});
+  _Builder({
+    required this.context,
+    required this.onYou,
+    this.baseStyle,
+    this.onCopied,
+  });
 
   final BuildContext context;
   final bool onYou;
   final TextStyle? baseStyle;
+  final void Function(String label)? onCopied;
+
+  /// Put something on the clipboard and let the host confirm it.
+  Future<void> _copy(String text, String label) async {
+    if (text.trim().isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    onCopied?.call(label);
+  }
 
   CcColors get cc => context.cc;
   Color get fg => onYou ? cc.onYou : cc.text;
@@ -55,7 +82,9 @@ class _Builder {
   Color get emColor => onYou ? cc.emOnYou : cc.em;
 
   TextStyle get base =>
-      (baseStyle ?? const TextStyle(fontSize: 15.5, height: 1.42)).copyWith(color: fg);
+      (baseStyle ?? const TextStyle(fontSize: 15.5, height: 1.42)).copyWith(
+        color: fg,
+      );
 
   List<Widget> blocks(List<md.Node> nodes) {
     final out = <Widget>[];
@@ -65,7 +94,10 @@ class _Builder {
     }
     // Space between blocks, but never a trailing gap inside the bubble.
     for (var i = 0; i < out.length - 1; i++) {
-      out[i] = Padding(padding: const EdgeInsets.only(bottom: 8), child: out[i]);
+      out[i] = Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: out[i],
+      );
     }
     return out;
   }
@@ -79,7 +111,10 @@ class _Builder {
 
     switch (node.tag) {
       case 'p':
-        return Text.rich(TextSpan(children: _inline(node.children ?? [])), style: base);
+        return Text.rich(
+          TextSpan(children: _inline(node.children ?? [])),
+          style: base,
+        );
 
       case 'h1':
       case 'h2':
@@ -88,7 +123,11 @@ class _Builder {
       case 'h5':
       case 'h6':
         final level = int.parse(node.tag.substring(1));
-        final size = switch (level) { 1 || 2 => 17.0, 3 || 4 => 15.5, _ => 14.0 };
+        final size = switch (level) {
+          1 || 2 => 17.0,
+          3 || 4 => 15.5,
+          _ => 14.0,
+        };
         final isSmall = level >= 5;
         return Text.rich(
           TextSpan(children: _inline(node.children ?? [])),
@@ -139,27 +178,45 @@ class _Builder {
   }
 
   Widget _codeBlock(md.Element pre) {
-    final code = (pre.children?.isNotEmpty ?? false) ? pre.children!.first : null;
+    final code = (pre.children?.isNotEmpty ?? false)
+        ? pre.children!.first
+        : null;
     final body = code is md.Element ? code.textContent : pre.textContent;
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 10),
-      decoration: BoxDecoration(
-        color: cc.codeBg,
-        borderRadius: BorderRadius.circular(9),
-      ),
-      // Long lines scroll themselves rather than forcing the bubble wide.
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Text(
-          body.trimRight(),
-          style: base.copyWith(
-            fontFamily: monoFamily,
-            fontSize: 12,
-            height: 1.5,
+    return Stack(
+      children: [
+        Container(
+          width: double.infinity,
+          // Right padding leaves room for the copy button rather than letting it
+          // sit on top of the code.
+          padding: const EdgeInsets.fromLTRB(11, 10, 52, 10),
+          decoration: BoxDecoration(
+            color: cc.codeBg,
+            borderRadius: BorderRadius.circular(9),
+          ),
+          // Long lines scroll themselves rather than forcing the bubble wide.
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Text(
+              body.trimRight(),
+              style: base.copyWith(
+                fontFamily: monoFamily,
+                fontSize: 12,
+                height: 1.5,
+              ),
+            ),
           ),
         ),
-      ),
+        // Dragging a selection across several lines on a phone is hopeless, so the
+        // button is the primary way code leaves a chat. Always visible: a
+        // touchscreen has no hover to reveal it.
+        Positioned(
+          top: 4,
+          right: 4,
+          // trimRight matches what is displayed, and keeps a trailing newline off
+          // the clipboard — pasted into a terminal that would submit the command.
+          child: _CopyChip(onTap: () => _copy(body.trimRight(), 'Code copied')),
+        ),
+      ],
     );
   }
 
@@ -176,8 +233,16 @@ class _Builder {
       final inlineNodes = <md.Node>[];
       final childBlocks = <md.Node>[];
       for (final child in item.children ?? <md.Node>[]) {
-        final isBlock = child is md.Element &&
-            const {'ul', 'ol', 'pre', 'blockquote', 'table', 'p'}.contains(child.tag);
+        final isBlock =
+            child is md.Element &&
+            const {
+              'ul',
+              'ol',
+              'pre',
+              'blockquote',
+              'table',
+              'p',
+            }.contains(child.tag);
         if (isBlock) {
           if (child.tag == 'p' && childBlocks.isEmpty && inlineNodes.isEmpty) {
             inlineNodes.addAll(child.children ?? []);
@@ -189,32 +254,37 @@ class _Builder {
         }
       }
 
-      rows.add(Padding(
-        padding: const EdgeInsets.only(bottom: 3),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: ordered ? 24 : 18,
-              child: Text(
-                ordered ? '$index.' : '•',
-                style: base.copyWith(color: cc.muted),
+      rows.add(
+        Padding(
+          padding: const EdgeInsets.only(bottom: 3),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: ordered ? 24 : 18,
+                child: Text(
+                  ordered ? '$index.' : '•',
+                  style: base.copyWith(color: cc.muted),
+                ),
               ),
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (inlineNodes.isNotEmpty)
-                    Text.rich(TextSpan(children: _inline(inlineNodes)), style: base),
-                  ...blocks(childBlocks),
-                ],
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (inlineNodes.isNotEmpty)
+                      Text.rich(
+                        TextSpan(children: _inline(inlineNodes)),
+                        style: base,
+                      ),
+                    ...blocks(childBlocks),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
-      ));
+      );
       index++;
     }
 
@@ -234,16 +304,18 @@ class _Builder {
         final cells = <Widget>[];
         for (final cell in row.children ?? <md.Node>[]) {
           if (cell is! md.Element) continue;
-          cells.add(Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-            child: Text.rich(
-              TextSpan(children: _inline(cell.children ?? [])),
-              style: base.copyWith(
-                fontSize: 13,
-                fontWeight: header ? FontWeight.w600 : null,
+          cells.add(
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+              child: Text.rich(
+                TextSpan(children: _inline(cell.children ?? [])),
+                style: base.copyWith(
+                  fontSize: 13,
+                  fontWeight: header ? FontWeight.w600 : null,
+                ),
               ),
             ),
-          ));
+          );
         }
         if (cells.isNotEmpty) rows.add(TableRow(children: cells));
       }
@@ -257,12 +329,19 @@ class _Builder {
     if (rows.isEmpty) return const SizedBox.shrink();
 
     // Ragged rows would throw; pad every row to the widest.
-    final width = rows.map((r) => r.children.length).reduce((a, b) => a > b ? a : b);
+    final width = rows
+        .map((r) => r.children.length)
+        .reduce((a, b) => a > b ? a : b);
     final padded = rows
-        .map((r) => TableRow(children: [
+        .map(
+          (r) => TableRow(
+            children: [
               ...r.children,
-              for (var i = r.children.length; i < width; i++) const SizedBox.shrink(),
-            ]))
+              for (var i = r.children.length; i < width; i++)
+                const SizedBox.shrink(),
+            ],
+          ),
+        )
         .toList();
 
     return SingleChildScrollView(
@@ -289,32 +368,51 @@ class _Builder {
 
       switch (node.tag) {
         case 'strong':
-          spans.addAll(_inline(
-            node.children ?? [],
-            inherited: style.copyWith(fontWeight: FontWeight.w700, color: strongColor),
-          ));
+          spans.addAll(
+            _inline(
+              node.children ?? [],
+              inherited: style.copyWith(
+                fontWeight: FontWeight.w700,
+                color: strongColor,
+              ),
+            ),
+          );
 
         case 'em':
-          spans.addAll(_inline(
-            node.children ?? [],
-            inherited: style.copyWith(fontStyle: FontStyle.italic, color: emColor),
-          ));
+          spans.addAll(
+            _inline(
+              node.children ?? [],
+              inherited: style.copyWith(
+                fontStyle: FontStyle.italic,
+                color: emColor,
+              ),
+            ),
+          );
 
         case 'del':
-          spans.addAll(_inline(
-            node.children ?? [],
-            inherited: style.copyWith(decoration: TextDecoration.lineThrough),
-          ));
+          spans.addAll(
+            _inline(
+              node.children ?? [],
+              inherited: style.copyWith(decoration: TextDecoration.lineThrough),
+            ),
+          );
 
         case 'code':
-          spans.add(TextSpan(
-            text: node.textContent,
-            style: style.copyWith(
-              fontFamily: monoFamily,
-              fontSize: (style.fontSize ?? 15.5) * 0.88,
-              backgroundColor: cc.codeBg,
+          // Inline code is nearly always a path, flag or command — something to
+          // paste elsewhere — so tapping it copies it.
+          final inline = node.textContent;
+          spans.add(
+            TextSpan(
+              text: inline,
+              style: style.copyWith(
+                fontFamily: monoFamily,
+                fontSize: (style.fontSize ?? 15.5) * 0.88,
+                backgroundColor: cc.codeBg,
+              ),
+              recognizer: TapGestureRecognizer()
+                ..onTap = () => _copy(inline, 'Copied'),
             ),
-          ));
+          );
 
         case 'a':
           final href = node.attributes['href'] ?? '';
@@ -322,10 +420,12 @@ class _Builder {
             color: onYou ? cc.onYou : cc.you,
             decoration: TextDecoration.underline,
           );
-          spans.add(TextSpan(
-            children: _inline(node.children ?? [], inherited: linkStyle),
-            recognizer: TapGestureRecognizer()..onTap = () => _open(href),
-          ));
+          spans.add(
+            TextSpan(
+              children: _inline(node.children ?? [], inherited: linkStyle),
+              recognizer: TapGestureRecognizer()..onTap = () => _open(href),
+            ),
+          );
 
         case 'br':
           spans.add(TextSpan(text: '\n', style: style));
@@ -340,7 +440,71 @@ class _Builder {
   Future<void> _open(String href) async {
     final uri = Uri.tryParse(href);
     // Only follow schemes that cannot execute anything locally.
-    if (uri == null || !const {'http', 'https', 'mailto'}.contains(uri.scheme)) return;
+    if (uri == null ||
+        !const {'http', 'https', 'mailto'}.contains(uri.scheme)) {
+      return;
+    }
     await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+}
+
+/// The small "copy" chip overlaid on a code block.
+///
+/// Text rather than an icon: at this size a glyph is a guess, and "copy" is the
+/// same word on every platform the user has ever used.
+class _CopyChip extends StatefulWidget {
+  const _CopyChip({required this.onTap});
+  final Future<void> Function() onTap;
+
+  @override
+  State<_CopyChip> createState() => _CopyChipState();
+}
+
+class _CopyChipState extends State<_CopyChip> {
+  bool _done = false;
+
+  /// Held so it can be cancelled: a bare Future.delayed would outlive the widget
+  /// and fire setState on a disposed State, which a widget test flags outright.
+  Timer? _reset;
+
+  @override
+  void dispose() {
+    _reset?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cc = context.cc;
+    return GestureDetector(
+      onTap: () async {
+        await widget.onTap();
+        if (!mounted) return;
+        setState(() => _done = true);
+        // Long enough to read, short enough that the button is ready again before
+        // you would reach for it twice.
+        _reset?.cancel();
+        _reset = Timer(const Duration(milliseconds: 1600), () {
+          if (mounted) setState(() => _done = false);
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: cc.raised,
+          border: Border.all(color: _done ? cc.ok : cc.line),
+          borderRadius: BorderRadius.circular(7),
+        ),
+        child: Text(
+          _done ? 'copied' : 'copy',
+          style: TextStyle(
+            fontFamily: monoFamily,
+            fontSize: 11,
+            letterSpacing: 0.4,
+            color: _done ? cc.ok : cc.muted,
+          ),
+        ),
+      ),
+    );
   }
 }

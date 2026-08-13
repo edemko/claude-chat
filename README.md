@@ -62,10 +62,24 @@ screen and it behaves like an app.
 
 ```bash
 ln -sf "$PWD/deploy/claude-chat.service" ~/.config/systemd/user/claude-chat.service
-# Set CC_HOST in that file to your Tailscale address first.
+
+# Host-specific settings go in a drop-in, NOT in the unit — that file is tracked in
+# git, so editing it in place is undone by the next pull, and the change is silent:
+# systemd keeps running the old copy until something reloads it, then the hub comes
+# back bound to loopback and unreachable.
+mkdir -p ~/.config/systemd/user/claude-chat.service.d
+printf '[Service]\nEnvironment=CC_HOST=%s\n' "$(tailscale ip -4)" \
+  > ~/.config/systemd/user/claude-chat.service.d/local.conf
+
 systemctl --user daemon-reload && systemctl --user enable --now claude-chat
 loginctl enable-linger "$USER"        # survive logout
 journalctl --user -u claude-chat -f
+```
+
+Check what it actually bound to, not what you asked for:
+
+```bash
+ss -tlpn | grep 7420        # want your 100.x.y.z address, never 0.0.0.0
 ```
 
 ### Configuration

@@ -120,12 +120,21 @@ class _BeadState extends State<Bead> with SingleTickerProviderStateMixin {
 /// The agent speaks from the environment: flush panel, no tail, no avatar.
 /// Only the human gets a filled bubble.
 class MessageBubble extends StatelessWidget {
-  const MessageBubble({super.key, required this.event, this.onCopy});
+  const MessageBubble({
+    super.key,
+    required this.event,
+    this.onCopy,
+    this.onCopied,
+  });
   final ChatEvent event;
 
   /// Long-press the bubble. Selection still works; this is the coarse, reliable
   /// version of it on a touchscreen.
   final VoidCallback? onCopy;
+
+  /// Confirmation for the finer-grained copies inside the message — a code block's
+  /// button, or a tap on inline code.
+  final void Function(String label)? onCopied;
 
   @override
   Widget build(BuildContext context) {
@@ -152,7 +161,11 @@ class MessageBubble extends StatelessWidget {
                 bottomRight: Radius.circular(mine ? 4 : 14),
               ),
             ),
-            child: MarkdownView(text: event.text, onYou: mine),
+            child: MarkdownView(
+              text: event.text,
+              onYou: mine,
+              onCopied: onCopied,
+            ),
           ),
         ),
       ),

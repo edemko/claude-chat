@@ -89,6 +89,9 @@ function renderInline(text, parent, doc, depth = 0) {
 function buildInline(kind, m, doc, depth) {
   if (kind === 'code') {
     const code = doc.createElement('code');
+    // Inline code is nearly always a path, flag or command — something to paste
+    // elsewhere. Tapping it copies it; the handler lives in app.js.
+    code.setAttribute('data-copy', 'inline');
     code.appendChild(doc.createTextNode(m[2].trim()));
     return code;
   }
@@ -243,7 +246,21 @@ function renderBlocks(lines, doc, depth) {
       if (fence[2]) code.className = `lang-${fence[2]}`;
       code.appendChild(doc.createTextNode(body.join('\n')));
       pre.appendChild(code);
-      frag.appendChild(pre);
+      // A copy button, because selecting a multi-line block by dragging on a phone
+      // is hopeless. Only the markup is built here: the click is bound by a
+      // delegated listener in app.js, so this module stays free of behaviour and
+      // keeps rendering under the DOM stub in scripts/test-markdown.mjs.
+      const wrap = doc.createElement('div');
+      wrap.className = 'code-wrap';
+      const copy = doc.createElement('button');
+      copy.className = 'copy-btn';
+      copy.setAttribute('type', 'button');
+      copy.setAttribute('data-copy', 'block');
+      copy.setAttribute('aria-label', 'Copy code');
+      copy.appendChild(doc.createTextNode('copy'));
+      wrap.appendChild(pre);
+      wrap.appendChild(copy);
+      frag.appendChild(wrap);
       continue;
     }
 

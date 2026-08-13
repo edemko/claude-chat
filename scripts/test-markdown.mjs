@@ -69,15 +69,19 @@ check('italic asterisk', 'this is *slanted* text', '<em>', '"slanted"');
 check('italic underscore', 'this is _slanted_ text', '<em>');
 check('snake_case is not italic', 'call some_var_name here', '"call some_var_name here"');
 check('bold inside italic', '*outer **inner** rest*', '<em>', '<strong>');
-check('inline code', 'run `npm test` now', '<code>', '"npm test"');
-check('code suppresses markup', 'literal `**not bold**` here', '<code>', '"**not bold**"');
+check('inline code', 'run `npm test` now', '<code data-copy="inline">', '"npm test"');
+check('code suppresses markup', 'literal `**not bold**` here',
+      '<code data-copy="inline">', '"**not bold**"');
 check('strikethrough', 'this is ~~gone~~', '<del>');
 check('link', 'see [the docs](https://example.com/x) here',
       '<a href="https://example.com/x"', 'rel="noopener noreferrer"');
 check('javascript: url is inert', '[click](javascript:alert(1))', '"click"');
 check('bare url', 'go to https://example.com now', '<a href="https://example.com"');
 check('heading', '## Section title', '<h4>', '"Section title"');
-check('fenced code', '```js\nconst a = 1;\n```', '<pre>', '<code .lang-js>', '"const a = 1;"');
+check('fenced code', '```js\nconst a = 1;\n```',
+      '<pre>', '<code .lang-js>', '"const a = 1;"',
+      // The block is wrapped so a copy button can be positioned over it.
+      '<div .code-wrap>', '<button .copy-btn', 'data-copy="block"')
 check('fence keeps markup literal', '```\n**stars**\n```', '"**stars**"');
 check('bullet list', '- one\n- two\n- three', '<ul>', '<li>', '"one"', '"three"');
 check('ordered list', '1. first\n2. second', '<ol>', '"first"');

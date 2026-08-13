@@ -838,3 +838,42 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   -webkit-user-select: text;
   user-select: text;
 }
+
+/* ---------- copy affordances ---------- */
+
+/*
+ * A code block plus its copy button. Selecting several lines by dragging on a
+ * phone is hopeless, so the button is the primary way to get code out of a chat.
+ */
+.code-wrap {
+  position: relative;
+}
+.code-wrap pre {
+  margin: 0;
+}
+.copy-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--raised);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  /* Always visible: there is no hover on a touchscreen. */
+  opacity: 0.85;
+}
+.copy-btn:active { opacity: 1; border-color: var(--you); }
+
+/* Inline code copies on tap, so it needs to look faintly tappable. */
+code[data-copy='inline'] {
+  cursor: pointer;
+  border-bottom: 1px dotted var(--line);
+}
+code[data-copy='inline'].is-copied {
+  border-bottom-color: var(--ok);
+  color: var(--ok);
+}
