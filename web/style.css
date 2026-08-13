@@ -877,3 +877,81 @@ code[data-copy='inline'].is-copied {
   border-bottom-color: var(--ok);
   color: var(--ok);
 }
+
+/* ---------- folder browser ---------- */
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px var(--pad) 4px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.crumb {
+  padding: 3px 8px;
+  border-radius: 7px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text);
+  flex: 0 0 auto;
+}
+.crumb-sep { color: var(--muted); font-size: 12px; flex: 0 0 auto; }
+
+.dir-up .dir-name { color: var(--muted); font-family: var(--mono); }
+
+/* A repo is what you are usually looking for, so it gets the emphasis accent. */
+.dir.is-repo .dir-name { color: var(--strong); font-weight: 640; }
+.repo-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--strong);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+.browse-foot, .sheet-foot {
+  display: flex;
+  gap: 8px;
+  padding: 10px var(--pad) calc(10px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+}
+.browse-foot button, .sheet-foot button {
+  flex: 1;
+  padding: 12px;
+  border-radius: 11px;
+  background: var(--you);
+  color: var(--on-you);
+  font-size: 15px;
+  font-weight: 600;
+}
+.browse-foot .ghost, .sheet-foot .ghost {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+
+.mkdir-row { display: flex; gap: 8px; padding: 8px var(--pad); }
+.mkdir-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--you);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 15px;
+}
+.mkdir-row .ghost {
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+}

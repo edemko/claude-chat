@@ -1,0 +1,18 @@
+# Poll GitHub for new commits and redeploy.
+#
+# Polling rather than a webhook: a deployment box worth having is one with no
+# inbound ports open, which is exactly what a webhook would need. Five minutes is
+# well under the time it takes to notice a deploy is missing, and the update script
+# exits immediately when the remote has not moved.
+[Unit]
+Description=Check for claude-chat updates
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Without this, every box that boots together hits the remote at the same instant.
+RandomizedDelaySec=45s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

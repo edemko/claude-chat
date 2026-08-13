@@ -1,0 +1,15 @@
+# One-shot pull/build/restart, driven by claude-chat-update.timer.
+#
+# Type=oneshot so the timer waits for it: overlapping runs would race on dist/,
+# and the script's own flock is the second line of defence rather than the first.
+[Unit]
+Description=Pull and redeploy claude-chat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/claude-chat
+ExecStart=%h/claude-chat/scripts/deploy-update.sh
+# nvm's node is not on a non-interactive PATH, and the system node may be too old.
+Environment=PATH=%h/.nvm/versions/node/v22.23.2/bin:/usr/local/bin:/usr/bin:/bin

@@ -19,6 +19,8 @@ const state = {
   cursor: null,
   hasMore: false,
   loadingOlder: false,
+  /** Directory the folder browser is currently showing. */
+  browsePath: null,
   /** A /rename outranks the automatic title, whichever arrives later. */
   titleIsCustom: false,
 };
@@ -194,6 +196,22 @@ function fmtWhen(ts) {
 }
 
 const repoOf = (cwd) => cwd.split('/').filter(Boolean).pop() ?? cwd;
+
+/**
+ * Build an element. Nodes are constructed, never assembled as HTML strings.
+ *
+ * Named `mk`, not `el`: several functions here already use `el` as a local for the
+ * div they are building, which would shadow this and turn any call inside them into
+ * a TypeError that only shows up when that branch runs.
+ */
+function mk(tag, className, children = []) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  for (const child of children) {
+    node.append(typeof child === 'string' ? document.createTextNode(child) : child);
+  }
+  return node;
+}
 
 let toastTimer = null;
 function toast(message, bad = false) {
@@ -1281,12 +1299,20 @@ $('info-sheet').addEventListener('click', (e) => {
 
 async function openSheet() {
   $('sheet').classList.add('is-open');
+  showBrowser(false);
   const list = $('dir-list');
   list.innerHTML = '<div class="empty">Looking for repos…</div>';
   try {
     const data = await api(`/api/servers/${state.serverId}/dirs`);
     if (data.dirs.length === 0) {
-      list.innerHTML = '<div class="empty"><strong>No repos found</strong>Set CC_REPO_ROOTS on the server.</div>';
+      // Name the paths that were actually searched. "Set CC_REPO_ROOTS" alone is
+      // unhelpful precisely when you are new and have not set it.
+      const where = (data.roots ?? []).join(', ') || 'nowhere';
+      list.replaceChildren(mk('div', 'empty', [
+        mk('strong', '', ['No git repos found']),
+        document.createTextNode(`Looked in ${where}. Browse to any folder below, `),
+        document.createTextNode('or set CC_REPO_ROOTS on the server.'),
+      ]));
       return;
     }
     list.replaceChildren(
@@ -1327,6 +1353,132 @@ async function startSession(dir) {
     toast(err.message, true);
   }
 }
+
+/* ---------- folder browser ---------- */
+
+/*
+ * One directory level at a time, not a tree.
+ *
+ * A tree rooted at the home directory means node_modules, .cache and .nvm — tens of
+ * thousands of entries, slow to read and impossible to scan on a phone. Breadcrumb
+ * plus children is what every file picker does, because it stays the same size no
+ * matter what it is pointed at. It also needs nothing installed on the server.
+ */
+
+function showBrowser(on) {
+  $('browse').hidden = !on;
+  $('dir-list').hidden = on;
+  $('btn-browse').hidden = on;
+}
+
+async function openBrowse(path = '~') {
+  showBrowser(true);
+  const list = $('browse-list');
+  list.replaceChildren(mk('div', 'empty', ['Reading…']));
+  try {
+    const data = await api(
+      `/api/servers/${state.serverId}/browse?path=${encodeURIComponent(path)}`,
+    );
+    state.browsePath = data.path;
+    renderCrumbs(data);
+    renderBrowseEntries(data);
+  } catch (err) {
+    list.replaceChildren(mk('div', 'empty', [err.message]));
+  }
+}
+
+function renderCrumbs(data) {
+  const crumbs = $('crumbs');
+  crumbs.replaceChildren();
+  // Only the tail is kept: a deep path would otherwise push the useful end of the
+  // breadcrumb off screen, and the last few segments are what orient you.
+  const shown = data.crumbs.slice(-4);
+  if (shown.length < data.crumbs.length) crumbs.append(mk('span', 'crumb-sep', ['…']));
+  shown.forEach((c, i) => {
+    if (i > 0) crumbs.append(mk('span', 'crumb-sep', ['/']));
+    const b = mk('button', 'crumb', [c.name]);
+    b.type = 'button';
+    b.addEventListener('click', () => openBrowse(c.path));
+    crumbs.append(b);
+  });
+}
+
+function renderBrowseEntries(data) {
+  const list = $('browse-list');
+  const rows = [];
+
+  if (data.parent) {
+    const up = mk('button', 'dir dir-up', [mk('span', 'dir-name', ['↑  ..'])]);
+    up.type = 'button';
+    up.addEventListener('click', () => openBrowse(data.parent));
+    rows.push(up);
+  }
+
+  for (const entry of data.entries) {
+    const row = mk('button', `dir${entry.isRepo ? ' is-repo' : ''}`, [
+      mk('span', 'dir-name', [entry.name]),
+      entry.isRepo ? mk('span', 'repo-badge', ['repo']) : mk('span', 'dir-path', ['folder']),
+    ]);
+    row.type = 'button';
+    // Tapping descends. Starting a session is always the explicit "Start here"
+    // button, so a mistap navigates rather than launching Claude somewhere odd.
+    row.addEventListener('click', () => openBrowse(entry.path));
+    rows.push(row);
+  }
+
+  if (rows.length === 0 || (rows.length === 1 && data.parent)) {
+    rows.push(mk('div', 'empty', [
+      data.hiddenCount > 0
+        ? `No visible folders here (${data.hiddenCount} hidden). You can still start a session in it.`
+        : 'No folders here. You can still start a session in it.',
+    ]));
+  }
+  list.replaceChildren(...rows);
+  $('btn-start-here').textContent = `Start in ${repoOf(data.path)}`;
+}
+
+/** Inline input rather than prompt(), which is ugly and can be blocked in a PWA. */
+function promptNewFolder() {
+  const input = mk('input', 'mkdir-input');
+  input.type = 'text';
+  input.placeholder = 'folder name';
+  input.autocapitalize = 'none';
+  input.autocorrect = 'off';
+
+  const submit = async () => {
+    const name = input.value.trim();
+    if (!name) return row.remove();
+    try {
+      const made = await api(`/api/servers/${state.serverId}/mkdir`, {
+        method: 'POST',
+        body: JSON.stringify({ parent: state.browsePath, name }),
+      });
+      toast(`Created ${repoOf(made.path)}`);
+      await openBrowse(made.path);
+    } catch (err) {
+      toast(err.message, true);
+      input.focus();
+    }
+  };
+
+  const ok = mk('button', 'ghost', ['Create']);
+  ok.type = 'button';
+  ok.addEventListener('click', submit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submit();
+    if (e.key === 'Escape') row.remove();
+  });
+
+  const row = mk('div', 'mkdir-row', [input, ok]);
+  $('browse-list').prepend(row);
+  input.focus();
+}
+
+$('btn-browse').addEventListener('click', () => openBrowse('~'));
+$('btn-mkdir').addEventListener('click', promptNewFolder);
+$('btn-start-here').addEventListener('click', () => {
+  if (state.browsePath) startSession(state.browsePath);
+});
 
 $('btn-new').addEventListener('click', openSheet);
 $('btn-sheet-close').addEventListener('click', () => $('sheet').classList.remove('is-open'));

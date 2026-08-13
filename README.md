@@ -82,6 +82,35 @@ Check what it actually bound to, not what you asked for:
 ss -tlpn | grep 7420        # want your 100.x.y.z address, never 0.0.0.0
 ```
 
+### Keeping a second machine up to date
+
+For a box that runs the hub but is not where you edit, deploy from git rather than
+copying files around:
+
+```bash
+git clone https://github.com/edemko/claude-chat.git ~/claude-chat
+cd ~/claude-chat && npm ci && npm run build
+scripts/deploy-update.sh --force      # pull, typecheck, build, restart
+```
+
+To pick up pushes on its own, install the timer:
+
+```bash
+ln -sf ~/claude-chat/deploy/claude-chat-update.{service,timer} ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now claude-chat-update.timer
+systemctl --user list-timers claude-chat-update    # when it next fires
+journalctl --user -u claude-chat-update -f         # what it did
+```
+
+It polls every five minutes rather than taking a webhook, because a deployment box
+worth having has no inbound ports open. The script exits immediately when the remote
+has not moved, and **typechecks and builds before restarting** — a bad push leaves
+that machine on the previous build instead of taking it down.
+
+Keep host-specific settings out of the clone: the unit file it ships is generic, so
+give the machine its own `~/.config/systemd/user/claude-chat.service` or a drop-in,
+otherwise the next pull silently repoints the service.
+
 ### Configuration
 
 | Env | Default | Meaning |

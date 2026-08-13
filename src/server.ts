@@ -13,7 +13,8 @@ import {
   safeEqual,
   verifySession,
 } from './auth.js';
-import { HOST, PORT, getToken, loadServers } from './config.js';
+import { BrowseError, listDir, makeDir } from './browse.js';
+import { HOST, PORT, REPO_ROOTS, getToken, loadServers } from './config.js';
 import { createSession, listRepoDirs } from './create.js';
 import { bindPane, listPaneCandidates, listSessions } from './discovery.js';
 import { LocalExecutor, SshExecutor, type Executor } from './exec.js';
@@ -275,10 +276,44 @@ async function handleApi(
     return sendJson(res, 201, created);
   }
 
-  // GET /api/servers/:id/dirs
+  // GET /api/servers/:id/dirs — git repos under CC_REPO_ROOTS, the quick list
   if (parts[3] === 'dirs' && method === 'GET') {
     const { home } = await probe(exec);
-    return sendJson(res, 200, { dirs: await listRepoDirs(exec, home) });
+    return sendJson(res, 200, { dirs: await listRepoDirs(exec, home), roots: REPO_ROOTS, home });
+  }
+
+  /*
+   * GET /api/servers/:id/browse?path=&hidden=1
+   *
+   * One directory level. The quick list above only finds repos two levels under a
+   * configured root, which leaves anyone whose code lives elsewhere unable to start
+   * a session at all; this is the way out of that.
+   */
+  if (parts[3] === 'browse' && method === 'GET') {
+    const { home } = await probe(exec);
+    try {
+      return sendJson(res, 200, await listDir(exec, home, url.searchParams.get('path') ?? '~', {
+        showHidden: url.searchParams.get('hidden') === '1',
+      }));
+    } catch (err) {
+      if (err instanceof BrowseError) throw new HttpError(err.status, err.message);
+      throw err;
+    }
+  }
+
+  // POST /api/servers/:id/mkdir  {parent, name}
+  if (parts[3] === 'mkdir' && method === 'POST') {
+    const body = (await readBody(req)) as { parent?: unknown; name?: unknown };
+    if (typeof body.parent !== 'string' || typeof body.name !== 'string') {
+      throw new HttpError(400, 'parent and name are required');
+    }
+    const { home } = await probe(exec);
+    try {
+      return sendJson(res, 200, { path: await makeDir(exec, home, body.parent, body.name) });
+    } catch (err) {
+      if (err instanceof BrowseError) throw new HttpError(err.status, err.message);
+      throw err;
+    }
   }
 
   // GET /api/servers/:id/candidates?pane=%0 — transcripts this pane could be running

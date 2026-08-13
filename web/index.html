@@ -108,7 +108,22 @@
       <input type="checkbox" id="skip-perms" checked>
       <span>Skip permission prompts — the session acts without asking</span>
     </label>
+
+    <!-- Quick list: repos found under CC_REPO_ROOTS. -->
     <div id="dir-list" class="scroll"></div>
+
+    <!-- Browser: any folder, for when the quick list is empty or wrong. -->
+    <div id="browse" hidden>
+      <div id="crumbs" class="crumbs"></div>
+      <div id="browse-list" class="scroll"></div>
+      <div class="browse-foot">
+        <button id="btn-mkdir" type="button" class="ghost">New folder</button>
+        <button id="btn-start-here" type="button">Start here</button>
+      </div>
+    </div>
+    <div class="sheet-foot">
+      <button id="btn-browse" type="button" class="ghost">Browse all folders…</button>
+    </div>
   </div>
 </div>
 
