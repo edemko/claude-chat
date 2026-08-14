@@ -340,6 +340,19 @@ node scripts/smoke-ws.mjs          # end-to-end live stream, throwaway session
 The PWA in `web/` has no build step — edit and reload. Bump `CACHE` in `web/sw.js` so the
 service worker picks up a change.
 
+To actually look at it on a machine with no display:
+
+```bash
+CC_URL=http://100.x.y.z:7420 node scripts/screenshot.mjs --scene cmd --size 1280x860
+```
+
+Headless Chrome over the DevTools protocol — navigate, click, screenshot, and print what
+the DOM measured. The measurements matter more than the picture: a sidebar that renders
+wrong is obvious as `list: [0, 0, 1113, 668]` and easy to talk yourself out of by eye.
+Scenes cover the list, a chat, the command menu, the hint, an unknown command, the drawer
+and both help tabs. Chrome is found in the puppeteer cache or via `$CHROME`; nothing is
+installed.
+
 Android client:
 
 ```bash
@@ -404,7 +417,7 @@ web/               the PWA (vanilla, no build step)
 web/markdown.js    DOM-building markdown renderer (never innerHTML)
 web/commands.js    command matching and help copy — pure, testable, no DOM
 flutter_client/    native Android client against the same API
-scripts/           notification hook, APK build/publish, headless tests
+scripts/           notification hook, APK build/publish, headless tests, screenshots
 deploy/            systemd user unit, ntfy compose
 ```
 
