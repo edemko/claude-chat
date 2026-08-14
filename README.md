@@ -42,7 +42,8 @@ The two are not symmetrical, and the asymmetry is the interesting part:
 | match confidence | `exact`/`strong`/`weak`/`pending` | `exact` or `pending`, never a guess |
 | context + limits | computed privately; scraped off the status line | fields in the transcript |
 | clears the composer | `Escape` | `C-u` — Escape leaves the text |
-| bypass flag | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` |
+| bypass flag | `--dangerously-skip-permissions` | `--yolo` |
+| where a rename lives | a `custom-title` record in the transcript | `threads.name` in its SQLite index only |
 
 Codex holding its transcript open is the whole reason its provider is a third the size
 of Claude Code's: `readlink /proc/<pid>/fd/*` answers the question that the confidence
@@ -232,6 +233,12 @@ default.
   becomes the caption.
 - **ⓘ** — model, effort, context tokens, branch, turn counts, uptime, and the pane's own
   status line scraped verbatim.
+- **⋮** — per-session menu: rename, session info, copy path, and (Claude only) pick the
+  right conversation. Names are stored **hub-side**, not typed into the agent, because
+  the two disagree about where a name lives — so one mechanism works for both and takes
+  effect immediately. Renames done in the terminal are picked up too: Claude Code's
+  `custom-title` record is read from the transcript, and Codex's from its SQLite index
+  on a best-effort basis (no `sqlite3`, no reflection — nothing else breaks).
 - **☰** — server browser, and **Help & commands**: what everything does, plus every
   command this session accepts. Star a server and it appears in a quick-switch bar under
   the session list; switching slides the list the direction you moved. Servers can also
@@ -471,6 +478,18 @@ Three Android details that would each have silently broken a release build:
 - A grep window cut mid-record leaves an **unterminated** JSON string, so a pattern
   that requires the closing quote matches nothing. This cost a debugging round: the
   session titles came back empty while the same grep worked fine in a shell.
+- Codex's slash commands cannot be read out of its binary the way Claude Code's can —
+  names and descriptions sit in separate string runs, so a scan pairs them wrongly. A
+  first attempt shipped `/name`, which Codex rejects outright; the real command is
+  `/rename`. The list is now enumerated from the live TUI by prefix-probing its own
+  menu, and `providers/codex.ts` records the loop that does it.
+- `--yolo` is a real Codex flag but appears in neither `--help` nor the binary's
+  strings. Worth confirming rather than assuming: an unknown flag *does* error, `--yolo`
+  does not, and it resolves to the same policy as the long form.
+- Claude Code writes an `ai-title` record on **every turn**, alongside any
+  `custom-title`. So a client that applies "latest title wins" to a history page will
+  undo a rename a moment after opening the chat — which looks exactly like the rename
+  having failed. `SessionInfo.titleIsCustom` exists to stop that.
 - A file containing a stray NUL byte is treated as *binary* by grep, which then reports
   nothing at all for a pattern that is plainly present. One had crept into a template
   literal in `commands.ts` — harmless at runtime, invisible to `tsc`, and it silently

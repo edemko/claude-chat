@@ -138,19 +138,31 @@ const typeInto = (text, caret = text.length) => evaluate(`
 `);
 
 const openFirstSession = async () => {
-  await evaluate(`document.querySelector('.session')?.click() ?? null`);
+  await evaluate(`document.querySelector('.session-open')?.click() ?? null`);
   await sleep(2500);
 };
 
 const SCENES = {
   list: async () => {},
   chat: openFirstSession,
+  // Open a session by title, to prove a rename survives the history load.
+  named: async () => {
+    await evaluate(`
+      (() => {
+        const rows = [...document.querySelectorAll('.session')];
+        const hit = rows.find((r) => r.querySelector('.session-title')?.textContent.includes('renamed'));
+        hit?.querySelector('.session-open')?.click();
+        return 'ok';
+      })()
+    `);
+    await sleep(3000);
+  },
   // The Codex session specifically, wherever it sits in the list.
   codex: async () => {
     await evaluate(`
       (() => {
         const badge = [...document.querySelectorAll('.prov.is-codex')][0];
-        badge?.closest('.session')?.click();
+        badge?.closest('.session')?.querySelector('.session-open')?.click();
         return 'ok';
       })()
     `);
@@ -181,6 +193,16 @@ const SCENES = {
   newsession: async () => {
     await evaluate(`document.getElementById('btn-new').click(); 'ok'`);
     await sleep(2000);
+  },
+  sessionmenu: async () => {
+    await evaluate(`document.querySelector('.session.is-codex .session-more')?.click() ?? null`);
+    await sleep(600);
+  },
+  sessionrename: async () => {
+    await evaluate(`document.querySelector('.session.is-codex .session-more')?.click() ?? null`);
+    await sleep(500);
+    await evaluate(`[...document.querySelectorAll('.menu-item')].find(i => i.textContent.startsWith('Rename'))?.click() ?? null`);
+    await sleep(600);
   },
   drawer: async () => {
     await evaluate(`document.getElementById('btn-menu').click(); 'ok'`);
@@ -317,7 +339,17 @@ const report = await evaluate(`JSON.stringify({
     : [...document.querySelectorAll('#new-prov button')].map(
         (b) => b.textContent + (b.classList.contains('is-on') ? '*' : ''),
       ),
+  chatTitle: document.getElementById('chat-title')?.textContent ?? null,
   clearKey: document.querySelector('.key[data-key="clear"]')?.textContent ?? null,
+  // Colour proof: the computed title colour per provider, and the active frame.
+  hues: [...document.querySelectorAll('.session')].map((r) => ({
+    prov: r.className.match(/is-(claude|codex)/)?.[1] ?? '?',
+    current: r.classList.contains('is-current'),
+    title: getComputedStyle(r.querySelector('.session-title')).color,
+    badge: getComputedStyle(r.querySelector('.prov')).color,
+    frame: getComputedStyle(r).boxShadow.replace(/\s+/g, ' ').slice(0, 46),
+  })),
+  menuItems: [...document.querySelectorAll('.menu-item')].map((i) => i.textContent.trim()),
   submitBusy: document.getElementById('add-submit').classList.contains('is-busy'),
   submitDisabled: document.getElementById('add-submit').disabled,
   addError: document.getElementById('add-error').textContent || null,

@@ -20,6 +20,7 @@ import { listRepoDirs } from './create.js';
 import { bindPane, countByProvider, listPaneCandidates, listSessions } from './discovery.js';
 import { LocalExecutor, SshExecutor, type Executor } from './exec.js';
 import { PaneNotClaudeError, capturePane, sendKey, sendText } from './input.js';
+import { setName } from './registry.js';
 import { availableProviders, isProviderId, providerFor } from './providers/index.js';
 import { probe } from './proc.js';
 import { StreamHub } from './stream.js';
@@ -458,6 +459,25 @@ async function handleApi(
       if (err instanceof UploadError) throw new HttpError(err.status, err.message);
       throw err;
     }
+  }
+
+  /*
+   * POST .../sessions/:uuid/name  {name}
+   *
+   * Stored hub-side rather than pushed into the agent, because the two disagree about
+   * where a name lives — Claude Code writes a transcript record, Codex writes only to
+   * its SQLite index — and neither can be set from outside without typing into the
+   * session. A name kept here works identically for both and applies immediately.
+   * An empty name clears it and the automatic title returns.
+   */
+  if (action === 'name' && method === 'POST') {
+    const body = (await readBody(req)) as { name?: unknown };
+    if (typeof body.name !== 'string') throw new HttpError(400, 'name is required');
+    const trimmed = body.name.trim().slice(0, 120);
+    const session = await sessions.get(serverId, uuid);
+    setName(serverId, session.uuid, session.paneId, trimmed || null);
+    sessions.invalidate(serverId);
+    return sendJson(res, 200, { ok: true, name: trimmed || null });
   }
 
   // POST .../sessions/:uuid/key  {key}

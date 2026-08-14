@@ -210,13 +210,14 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 
 .session {
   display: flex;
-  gap: 12px;
+  gap: 8px;
   align-items: flex-start;
   width: 100%;
   text-align: left;
   padding: 14px var(--pad);
   border-bottom: 1px solid var(--line);
 }
+.session-open:active { opacity: 0.75; }
 .session:active { background: var(--panel); }
 .session .bead { margin-top: 7px; }
 .session-body { flex: 1; min-width: 0; }
@@ -1164,8 +1165,27 @@ code[data-copy='inline'].is-copied {
 }
 .proj .session { border-bottom: none; padding-top: 9px; padding-bottom: 9px; }
 .proj .session:last-child { padding-bottom: 13px; }
-.session.is-current { background: var(--panel); }
-.session.is-current .session-title { color: var(--you); }
+/*
+ * The open session, framed top and bottom in its agent's colour.
+ *
+ * Rules rather than a full border: the row is edge to edge, so side borders would sit
+ * against the pane edges and read as a misdrawn box. Inset box-shadow rather than
+ * `border`, which would change the row's height and shift every row below it as the
+ * selection moves.
+ */
+.session.is-current {
+  background: var(--panel);
+  box-shadow:
+    inset 0 2px 0 0 var(--hue, var(--you)),
+    inset 0 -2px 0 0 var(--hue, var(--you));
+}
+/*
+ * The title carries its agent's colour too, not just the badge — a green badge over a
+ * blue title was the mismatch that prompted this. The open session is distinguished by
+ * the frame and panel background instead, so colour stays free to mean "which agent".
+ */
+.session-title { color: var(--hue, var(--text)); }
+.session.is-current .session-title { font-weight: 620; }
 
 /* ---------- help ---------- */
 
@@ -1619,9 +1639,15 @@ button.ghost.is-busy::after { --spin: var(--muted); }
   border: 1px solid var(--line);
   color: var(--muted);
 }
-/* Distinct hues, both contrast-checked against either theme's panel. */
-.prov.is-claude { color: var(--you); border-color: var(--you); opacity: 0.85; }
-.prov.is-codex { color: var(--ok); border-color: var(--ok); opacity: 0.9; }
+/*
+ * One hue per agent, set once as `--hue` on the row and consumed by the title, the
+ * badge and the active frame alike. Before this the title always took Claude's accent,
+ * so a Codex session read as blue text under a green badge.
+ */
+.session.is-claude, .proj .session.is-claude { --hue: var(--you); }
+.session.is-codex, .proj .session.is-codex { --hue: var(--ok); }
+
+.prov { color: var(--hue, var(--muted)); border-color: var(--hue, var(--line)); }
 
 .session-title-row {
   display: flex;
@@ -1699,3 +1725,61 @@ button.ghost.is-busy::after { --spin: var(--muted); }
  * them only to a status-line command, so this block is where the two sheets differ.
  */
 .info-extra { margin-top: 2px; }
+
+/* ---------- per-session menu ---------- */
+
+.session-more {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  width: 30px;
+  height: 30px;
+  margin-top: 2px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+}
+.session-more:active { background: var(--raised); color: var(--text); }
+/* The dots are the affordance; keep them quiet until wanted. */
+.session-more { opacity: 0.6; }
+.session:hover .session-more, .session.is-current .session-more { opacity: 1; }
+
+/*
+ * The menu itself is a centred modal rather than a popover anchored to the dots. A
+ * popover has to be positioned against a row that can scroll out from under it, and
+ * on a phone it lands under the thumb that opened it.
+ */
+.menu-list { padding: 6px 0 10px; }
+.menu-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  padding: 13px var(--pad);
+  font-size: 15px;
+  color: var(--text);
+}
+.menu-item:active { background: var(--panel); }
+.menu-item .sub {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+.menu-item.is-bad { color: var(--bad); }
+
+.menu-head {
+  padding: 10px var(--pad) 0;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}

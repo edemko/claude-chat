@@ -21,6 +21,7 @@ import { enrichAgentProcs, findAgentInPane, type Probe } from '../proc.js';
 import {
   getCreated,
   getMapping,
+  getName,
   liveMappingKey,
   pruneMappings,
   putMapping,
@@ -248,15 +249,40 @@ function unescapeJsonString(raw: string): string {
  * conversation they are looking at, so it is worth a dedicated scan. A `/rename`
  * (custom-title) always wins over the auto-generated ai-title.
  */
-export async function readLastTitle(exec: Executor, path: string): Promise<string | null> {
+export interface TitlePair {
+  /** Set by `/rename`. Outranks the automatic title wherever it appears. */
+  custom: string | null;
+  /** The generated summary. */
+  ai: string | null;
+}
+
+/**
+ * Both kinds of title, scanned over the whole file, reported separately.
+ *
+ * Returning them apart rather than collapsed matters: the caller has to know *which*
+ * kind it got, or it cannot tell the client whether the name was chosen or generated —
+ * and without that the client happily overwrites a rename with the next `ai-title` it
+ * sees. An earlier version returned a single string and did exactly that.
+ *
+ * Two greps over the file, ~35 ms on a 16 MB transcript, behind a 4-second list cache.
+ */
+export async function readTitlePair(exec: Executor, path: string): Promise<TitlePair> {
   const { stdout } = await exec.runShell(
     `grep -o '"customTitle":"[^"]*"' ${q(path)} 2>/dev/null | tail -1; ` +
       `grep -o '"aiTitle":"[^"]*"' ${q(path)} 2>/dev/null | tail -1`,
   );
   const custom = /"customTitle":"(.*)"/.exec(stdout);
-  if (custom?.[1]) return unescapeJsonString(custom[1]);
   const ai = /"aiTitle":"(.*)"/.exec(stdout);
-  return ai?.[1] ? unescapeJsonString(ai[1]) : null;
+  return {
+    custom: custom?.[1] ? unescapeJsonString(custom[1]) : null,
+    ai: ai?.[1] ? unescapeJsonString(ai[1]) : null,
+  };
+}
+
+/** A single resolved name, for callers that do not care where it came from. */
+export async function readLastTitle(exec: Executor, path: string): Promise<string | null> {
+  const { custom, ai } = await readTitlePair(exec, path);
+  return custom ?? ai;
 }
 
 export interface TranscriptSummary {
@@ -584,17 +610,36 @@ async function discover(exec: Executor, serverId: string, p: Probe): Promise<Ses
     const paneTitle = stripGlyph(entry.pane.title);
     const repo = entry.proc.cwd.split('/').filter(Boolean).pop() ?? 'session';
     let title = !paneTitle || /^claude(\s+code)?$/i.test(paneTitle) ? repo : paneTitle;
+    let titleIsCustom = false;
     if (res) {
       try {
         const records = await readRecords(exec, res.transcript, 60_000);
         const s = summarise(records);
-        const aiTitle = s.aiTitle ?? (await readLastTitle(exec, res.transcript));
-        if (aiTitle) title = aiTitle;
+        /*
+         * A whole-file scan whenever the tail shows no rename.
+         *
+         * The old condition only fell back when the tail had *no* title at all, so a
+         * rename older than the 60 KB window lost to the `ai-title` Claude Code writes
+         * on every turn, and was simply invisible.
+         */
+        const scan = s.customTitle ? null : await readTitlePair(exec, res.transcript);
+        const custom = s.customTitle ?? scan?.custom ?? null;
+        const resolved = custom ?? s.aiTitle ?? scan?.ai ?? null;
+        if (resolved) title = resolved;
+        titleIsCustom = custom !== null;
         lastMessage = s.lastAssistantText ?? s.lastUserText ?? null;
         lastActivity = s.lastEventTs || null;
       } catch (err) {
         console.error(`[claude] summary failed for ${res.transcript}:`, err);
       }
+    }
+
+    // A name given from this app outranks anything in the transcript: it is the most
+    // recent explicit statement of what the session is called.
+    const given = getName(serverId, res?.uuid ?? pendingId(entry.proc.paneId), entry.proc.paneId);
+    if (given) {
+      title = given;
+      titleIsCustom = true;
     }
 
     const created = res ? getCreated(res.uuid) : undefined;
@@ -614,6 +659,7 @@ async function discover(exec: Executor, serverId: string, p: Probe): Promise<Ses
       cwd: entry.proc.cwd,
       isRepo: false, // filled in by the orchestrator, which batches the test
       title,
+      titleIsCustom,
       status: age < WORKING_WINDOW_MS ? 'working' : 'idle',
       confidence: res?.confidence ?? 'pending',
       lastActivity,

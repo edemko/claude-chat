@@ -60,6 +60,15 @@ export interface SessionInfo {
   /** cwd holds a `.git`, so the session is working in a repo rather than a folder. */
   isRepo: boolean;
   title: string;
+  /**
+   * The title came from a deliberate rename rather than an automatic summary.
+   *
+   * Carried so a client cannot undo a rename: Claude Code writes an `ai-title` record
+   * on every turn as well as the `custom-title`, so a history page whose window holds
+   * the automatic one but not the older rename would otherwise reset the header to the
+   * generated name a moment after opening it.
+   */
+  titleIsCustom: boolean;
   status: SessionStatus;
   confidence: MatchConfidence;
   lastActivity: number | null;   // epoch ms of transcript mtime

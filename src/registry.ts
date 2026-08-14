@@ -24,15 +24,29 @@ interface RegistryShape {
   created: Record<string, CreatedEntry>;
   /** Cache of resolved pane→transcript mappings, keyed by server:pane:procStart. */
   mappings: Record<string, MappingEntry>;
+  /**
+   * Names given to sessions from this app.
+   *
+   * Held here rather than pushed into the agent because the two agents disagree about
+   * where a name lives: Claude Code's `/rename` writes a `custom-title` record into the
+   * transcript, while Codex's writes only to its SQLite index and leaves the transcript
+   * byte-identical. A name stored here works the same for both, takes effect at once,
+   * and needs nothing installed to read back.
+   */
+  names: Record<string, string>;
 }
 
-const EMPTY: RegistryShape = { created: {}, mappings: {} };
+const EMPTY: RegistryShape = { created: {}, mappings: {}, names: {} };
 
 function load(): RegistryShape {
   if (!existsSync(REGISTRY_PATH)) return structuredClone(EMPTY);
   try {
     const parsed = JSON.parse(readFileSync(REGISTRY_PATH, 'utf8')) as Partial<RegistryShape>;
-    return { created: parsed.created ?? {}, mappings: parsed.mappings ?? {} };
+    return {
+      created: parsed.created ?? {},
+      mappings: parsed.mappings ?? {},
+      names: parsed.names ?? {},
+    };
   } catch (err) {
     console.error('[registry] unreadable, starting fresh:', err);
     return structuredClone(EMPTY);
@@ -101,6 +115,37 @@ export function pruneMappings(liveKeys: Set<string>): void {
 
 export function liveMappingKey(serverId: string, paneId: string, pid: number): string {
   return mappingKey(serverId, paneId, pid);
+}
+
+/* ---------- names given from this app ---------- */
+
+const nameKey = (serverId: string, key: string): string => `${serverId}:${key}`;
+
+/**
+ * Look up a name by session uuid, then by pane.
+ *
+ * Both keys are written on rename, because a session's uuid is not stable across its
+ * whole life: one that has never been spoken to has no transcript and therefore no
+ * real uuid, and it gains one the moment its first message lands. Keying on the pane
+ * as well is what carries a name across that transition — and across a `/clear`,
+ * which swaps the uuid under the same pane.
+ */
+export function getName(serverId: string, uuid: string, paneId: string): string | undefined {
+  return state.names[nameKey(serverId, uuid)] ?? state.names[nameKey(serverId, `pane:${paneId}`)];
+}
+
+export function setName(
+  serverId: string,
+  uuid: string,
+  paneId: string,
+  name: string | null,
+): void {
+  const keys = [nameKey(serverId, uuid), nameKey(serverId, `pane:${paneId}`)];
+  for (const key of keys) {
+    if (name) state.names[key] = name;
+    else delete state.names[key];
+  }
+  persist();
 }
 
 export function reload(): void {

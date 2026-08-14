@@ -256,6 +256,38 @@
   </div>
 </div>
 
+<!-- Per-session menu -->
+<div id="menu-sheet" class="sheet is-modal">
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <h2 id="menu-title">Session</h2>
+      <button id="btn-menu-close" class="iconbtn" aria-label="Close">✕</button>
+    </div>
+    <div id="menu-where" class="menu-head"></div>
+    <div id="menu-list" class="menu-list"></div>
+  </div>
+</div>
+
+<!-- Rename a session -->
+<div id="sname-sheet" class="sheet is-modal">
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <h2>Rename session</h2>
+      <button id="btn-sname-close" class="iconbtn" aria-label="Close">✕</button>
+    </div>
+    <form id="sname-form" class="add-form">
+      <label class="field-label" for="sname-input">Name</label>
+      <input id="sname-input" type="text" placeholder="e.g. tracking feature"
+             autocapitalize="sentences" autocomplete="off">
+      <p id="sname-note" class="field-note meta"></p>
+      <div class="modal-foot">
+        <button id="btn-sname-clear" type="button" class="ghost">Clear</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- Rename a server -->
 <div id="name-sheet" class="sheet is-modal">
   <div class="sheet-panel">

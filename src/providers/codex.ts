@@ -24,6 +24,7 @@ import { listCommands, type CommandCatalogue, type SlashCommand } from '../comma
 import { launchInTmux, resolveBinary, settleStartup, tmuxSafeName } from '../create.js';
 import type { Executor } from '../exec.js';
 import { enrichAgentProcs, findAgentInPane, type Probe } from '../proc.js';
+import { getName } from '../registry.js';
 import { q } from '../shell.js';
 import { readRecords, statFile } from '../transcript.js';
 import type {
@@ -342,6 +343,50 @@ export function titleFromFirstMessage(text: string, fallback: string): string {
   return candidate.length > 72 ? `${candidate.slice(0, 71)}…` : candidate;
 }
 
+/**
+ * Names set by Codex's own `/rename`, read from its SQLite index — best effort.
+ *
+ * This is the one thing genuinely not in the rollout file: `/rename` updates
+ * `threads.name` and leaves the transcript byte-identical (verified — 44587 bytes
+ * before and after, zero occurrences of the new name). So without this a rename typed
+ * in the terminal would never reach the app.
+ *
+ * Best effort on purpose. `sqlite3` is not guaranteed to exist — on the machine this
+ * was built on it is only on PATH because an Android SDK happens to be installed — so
+ * a missing binary costs the terminal-rename reflection and nothing else. Names given
+ * from inside this app live in the hub's own registry and need none of this.
+ *
+ * Read-only, and with the whole database including its `-wal`: a plain reader consults
+ * the write-ahead log, so a live Codex's committed renames are visible.
+ */
+async function sqliteNames(
+  exec: Executor,
+  home: string,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const db = `${home}/.codex/state_*.sqlite`;
+  const sql = "select id || '\t' || name from threads where name is not null and name != '';";
+  const script = [
+    'command -v sqlite3 >/dev/null 2>&1 || exit 0',
+    `for f in ${db}; do [ -f "$f" ] || continue;`,
+    `  sqlite3 -readonly "file:$f?mode=ro" ${q(sql)} 2>/dev/null || true`,
+    'done',
+  ].join('\n');
+  try {
+    const { stdout } = await exec.runShell(script, { timeoutMs: 10_000 });
+    for (const line of stdout.split('\n')) {
+      const tab = line.indexOf('\t');
+      if (tab <= 0) continue;
+      const id = line.slice(0, tab).trim();
+      const name = line.slice(tab + 1).trim();
+      if (id && name) out.set(id.toLowerCase(), name);
+    }
+  } catch {
+    // No sqlite3, or an unreadable database. Neither is worth a log line every poll.
+  }
+  return out;
+}
+
 async function discover(exec: Executor, serverId: string, p: Probe): Promise<SessionInfo[]> {
   const etimesByPid = new Map(p.ps.map((r) => [r.pid, r.etimes]));
 
@@ -371,7 +416,10 @@ async function discover(exec: Executor, serverId: string, p: Probe): Promise<Ses
   }
 
   const withTranscript = found.filter((f) => f.transcript);
-  const titles = await readTitles(exec, withTranscript.map((f) => f.transcript));
+  const [titles, renamed] = await Promise.all([
+    readTitles(exec, withTranscript.map((f) => f.transcript)),
+    sqliteNames(exec, p.home),
+  ]);
 
   const sessions: SessionInfo[] = [];
   for (const f of found) {
@@ -400,11 +448,27 @@ async function discover(exec: Executor, serverId: string, p: Probe): Promise<Ses
       }
     }
 
+    const uuid = (f.transcript && uuidFromRollout(f.transcript)) || pendingId(f.paneId);
+
+    // Precedence: a name given from this app, then Codex's own /rename, then the first
+    // message. The app's own name wins because it is the most recent explicit choice.
+    let titleIsCustom = false;
+    const fromCodex = renamed.get(uuid);
+    if (fromCodex) {
+      title = fromCodex;
+      titleIsCustom = true;
+    }
+    const given = getName(serverId, uuid, f.paneId);
+    if (given) {
+      title = given;
+      titleIsCustom = true;
+    }
+
     const age = lastActivity ? Date.now() - lastActivity : Infinity;
     sessions.push({
       serverId,
       provider: 'codex',
-      uuid: (f.transcript && uuidFromRollout(f.transcript)) || pendingId(f.paneId),
+      uuid,
       transcript: f.transcript,
       paneId: f.paneId,
       tmuxSession: f.pane.tmuxSession,
@@ -412,6 +476,7 @@ async function discover(exec: Executor, serverId: string, p: Probe): Promise<Ses
       cwd: f.cwd,
       isRepo: false, // the orchestrator fills this in, batching the test
       title,
+      titleIsCustom,
       status: age < WORKING_WINDOW_MS ? 'working' : 'idle',
       // No inference happened: either the process named its file, or there is none.
       confidence: f.transcript ? 'exact' : 'pending',
@@ -664,7 +729,16 @@ async function create(
   // No `--session-id` equivalent exists, and none is needed: the process names its
   // own rollout on an fd, so the mapping is read rather than arranged in advance.
   const name = tmuxSafeName(dir, Math.random().toString(16).slice(2, 6));
-  const inner = q(bin) + (bypass ? ' --dangerously-bypass-approvals-and-sandbox' : '');
+  /*
+   * `--yolo` is the short alias for `--dangerously-bypass-approvals-and-sandbox`. It
+   * is absent from `--help` and from the binary's strings, so it was worth confirming
+   * rather than assuming: an unknown flag *does* error ("unexpected argument
+   * '--definitelynotaflag' found"), `--yolo` does not, and a session started with it
+   * records `approval_policy: never` with `sandbox_policy: danger-full-access` — the
+   * same resolved policy as the long form. If a future version drops the alias, the
+   * long flag is the documented one to fall back to.
+   */
+  const inner = q(bin) + (bypass ? ' --yolo' : '');
 
   const spec = {
     dir,
@@ -700,37 +774,68 @@ async function create(
 /* ---------- slash commands ---------- */
 
 /**
- * Codex's built-ins, with the descriptions its own TUI shows.
+ * Codex's built-in slash commands.
  *
- * The same binary-scan trick used for Claude Code works here — the strings are all
- * in the executable — but Codex is a Rust binary that stores the names and the
- * descriptions in separate runs, so scanning gives a list with no reliable pairing.
- * A curated list is the honest answer; `commands.ts` still contributes this
- * machine's and this project's own commands and skills on top.
+ * Unlike Claude Code, these cannot be read out of the binary. The names and their
+ * descriptions live in separate string runs in a Rust executable, so a scan returns
+ * both halves with no reliable pairing — and a first attempt at guessing them shipped
+ * `/name`, which Codex rejects outright as "Unrecognized command". The real one is
+ * `/rename`.
+ *
+ * So this list is *empirical*. To regenerate it, open a Codex session in tmux and
+ * prefix-probe its own menu, which filters as you type:
+ *
+ *   for k in a c d e i l m n p q r s t u; do
+ *     tmux send-keys -t <session> C-u; tmux send-keys -t <session> -l -- "/$k"; sleep 0.7
+ *     tmux capture-pane -p -t <session> | grep -E '^\s+/[a-z-]+\s{2,}\S'
+ *   done
+ *
+ * Descriptions below are Codex's own wording, lightly capitalised. `commands.ts` adds
+ * this machine's and this project's commands and skills on top.
  */
 const CODEX_BUILTINS: readonly [string, string, string | null][] = [
-  ['model', 'Choose the model and reasoning effort', null],
+  ['model', 'Choose what model and reasoning effort to use', null],
   ['fast', '1.5x speed, increased usage', null],
+  ['plan', 'Switch to Plan mode', null],
+  ['review', 'Review my current changes and find issues', null],
+  ['compact', 'Summarise the conversation to avoid the context limit', null],
+  ['rename', 'Rename the current thread', null],
+  ['new', 'Start a new chat during a conversation', null],
+  ['clear', 'Clear the terminal and start a new chat', null],
+  ['side', 'Start a side conversation in an ephemeral fork', null],
+  ['agent', 'Switch the active agent thread', null],
+  ['subagents', 'Switch the active agent thread', null],
+  ['status', 'Show current session configuration and token usage', null],
+  ['usage', 'View account usage, or a usage-limit reset', null],
+  ['diff', 'Show the git diff, including untracked files', null],
+  ['copy', 'Copy the last response as markdown', null],
+  ['mention', 'Mention a file', '<file>'],
+  ['init', 'Create an AGENTS.md with instructions for Codex', null],
+  ['memories', 'Configure memory use and generation', null],
+  ['skills', 'Use skills to improve how Codex performs specific tasks', null],
+  ['plugins', 'Browse plugins', null],
+  ['mcp', 'List configured MCP tools; /mcp verbose for details', null],
   ['permissions', 'Choose what Codex is allowed to do', null],
   ['approve', 'Approve one retry of a recent auto-review denial', null],
-  ['review', 'Review any changes and find issues', null],
-  ['plan', 'Work out a detailed plan before implementing', null],
-  ['compact', 'Summarise the conversation to free up context', null],
-  ['new', 'Start a new session', null],
-  ['clear', 'Clear the conversation', null],
-  ['name', 'Name this session', '[name]'],
-  ['init', 'Create an AGENTS.md for this project', null],
-  ['status', 'Show session status and configuration', null],
-  ['diff', 'Show the current working-tree diff', null],
-  ['mention', 'Reference a file in your message', '<file>'],
-  ['skills', 'List available skills', null],
-  ['agents', 'Manage subagents', null],
-  ['mcp', 'Manage MCP servers', null],
-  ['ide', 'Pull context from your IDE', null],
+  ['personality', 'Choose a communication style for Codex', null],
+  ['ide', 'Include selection, open files and other IDE context', null],
+  ['ps', 'List background terminals', null],
+  ['stop', 'Stop all background terminals', null],
+  ['raw', 'Toggle raw scrollback mode, for copy-friendly selection', null],
+  ['statusline', 'Configure which items appear in the status line', null],
+  ['title', 'Configure which items appear in the terminal title', null],
+  ['theme', 'Choose a syntax highlighting theme', null],
   ['keymap', 'Remap TUI shortcuts', null],
   ['vim', 'Toggle Vim mode for the composer', null],
+  ['pets', 'Choose or hide the terminal pet', null],
   ['experimental', 'Toggle experimental features', null],
-  ['exit', 'End this session', null],
+  ['import', 'Import setup, project and recent chats from Claude Code', null],
+  ['resume', 'Resume a saved chat', null],
+  ['archive', 'Archive this session and exit', null],
+  ['delete', 'Permanently delete this session and exit', null],
+  ['logout', 'Log out of Codex', null],
+  ['exit', 'Exit Codex', null],
+  ['quit', 'Exit Codex', null],
 ];
 
 async function commands(

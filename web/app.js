@@ -964,7 +964,7 @@ $('add-form').addEventListener('submit', addServer);
 // past needs a keyboard way out.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  for (const id of ['name-sheet', 'add-sheet']) {
+  for (const id of ['sname-sheet', 'menu-sheet', 'name-sheet', 'add-sheet']) {
     if ($(id).classList.contains('is-open')) {
       $(id).classList.remove('is-open');
       if (id === 'name-sheet') renamingId = null;
@@ -987,9 +987,9 @@ async function routeStart() {
 
 function sessionRow(session) {
   const current = state.session?.paneId === session.paneId;
-  const btn = document.createElement('button');
-  btn.className = `session${current ? ' is-current' : ''}`;
-  btn.type = 'button';
+  // `is-<provider>` sets --hue, which the title, badge and active frame all read.
+  const btn = document.createElement('div');
+  btn.className = `session is-${session.provider}${current ? ' is-current' : ''}`;
 
   const bead = document.createElement('span');
   bead.className = `bead${session.status === 'working' ? ' is-working' : ''}`;
@@ -1026,8 +1026,26 @@ function sessionRow(session) {
     body.append(preview);
   }
 
-  btn.append(bead, body);
-  btn.addEventListener('click', () => openChat(session));
+  // The row is a div with a button inside rather than one big button, because a
+  // button cannot legally contain another button — and nesting them made the ⋮ tap
+  // open the chat as well on some browsers.
+  const open = mk('button', 'session-open', []);
+  open.type = 'button';
+  open.style.cssText =
+    'display:flex;gap:12px;align-items:flex-start;flex:1;min-width:0;text-align:left;padding:0;background:none;border:none';
+  open.append(bead, body);
+  open.addEventListener('click', () => openChat(session));
+
+  const more = mk('button', 'session-more', ['⋮']);
+  more.type = 'button';
+  more.setAttribute('aria-label', `Options for ${session.title}`);
+  more.title = 'Session options';
+  more.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openSessionMenu(session);
+  });
+
+  btn.append(open, more);
   return btn;
 }
 
@@ -1132,6 +1150,130 @@ function syncOpenSession() {
   $('chat-title').textContent = fresh.title;
   $('chat-bead').className = `bead${fresh.status === 'working' ? ' is-working' : ''}`;
 }
+
+/* ---------- per-session menu ---------- */
+
+/** The session the ⋮ menu is acting on. */
+let menuSession = null;
+
+function closeSessionMenu() {
+  $('menu-sheet').classList.remove('is-open');
+}
+
+function menuItem(label, detail, onPick, bad = false) {
+  const row = mk('button', `menu-item${bad ? ' is-bad' : ''}`, [label]);
+  row.type = 'button';
+  if (detail) row.append(mk('span', 'sub', [detail]));
+  row.addEventListener('click', onPick);
+  return row;
+}
+
+function openSessionMenu(session) {
+  menuSession = session;
+  $('menu-title').textContent = session.title;
+  $('menu-where').replaceChildren(
+    providerBadge(session.provider),
+    mk('span', '', [shortPath(session.cwd)]),
+    mk('span', '', [`pane ${session.paneId}`]),
+  );
+
+  const items = [
+    menuItem('Rename', session.titleIsCustom ? 'named' : 'automatic', () => {
+      closeSessionMenu();
+      openSessionRename(session);
+    }),
+    menuItem('Session info', session.confidence, () => {
+      closeSessionMenu();
+      void openChat(session).then(openInfo);
+    }),
+    menuItem('Copy path', repoOf(session.cwd), async () => {
+      const ok = await copyText(session.cwd);
+      closeSessionMenu();
+      toast(ok ? 'Path copied' : 'Could not copy', !ok);
+    }),
+  ];
+
+  // Correcting a guessed transcript only applies to Claude Code; Codex never guesses.
+  if (session.provider === 'claude') {
+    items.push(
+      menuItem('Pick conversation', 'if the match is wrong', () => {
+        closeSessionMenu();
+        void openChat(session).then(openPicker);
+      }),
+    );
+  }
+
+  $('menu-list').replaceChildren(...items);
+  $('menu-sheet').classList.add('is-open');
+}
+
+$('btn-menu-close').addEventListener('click', closeSessionMenu);
+$('menu-sheet').addEventListener('click', (e) => {
+  if (e.target === $('menu-sheet')) closeSessionMenu();
+});
+
+/* ---------- renaming a session ---------- */
+
+/*
+ * The name is stored by the hub, not typed into the agent.
+ *
+ * The two agents keep names in different places — Claude Code writes a `custom-title`
+ * record into its transcript, Codex writes only to its SQLite index and leaves the
+ * transcript untouched — and neither can be set from outside without typing into the
+ * session, which would land in the conversation. A hub-side name behaves the same for
+ * both and takes effect on the next poll.
+ */
+function openSessionRename(session) {
+  menuSession = session;
+  const input = $('sname-input');
+  input.value = session.titleIsCustom ? session.title : '';
+  input.placeholder = session.title;
+  $('sname-note').textContent =
+    `${PROVIDER_LABEL[session.provider] ?? session.provider} · ${shortPath(session.cwd)}`;
+  $('sname-sheet').classList.add('is-open');
+  input.focus();
+  input.select();
+}
+
+function closeSessionRename() {
+  $('sname-sheet').classList.remove('is-open');
+}
+
+async function saveSessionName(name) {
+  const session = menuSession;
+  if (!session) return closeSessionRename();
+  try {
+    await api(`/api/servers/${session.serverId}/sessions/${session.uuid}/name`, {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    });
+    closeSessionRename();
+    // Apply locally at once rather than waiting for the next poll to come round.
+    if (name) {
+      session.title = name;
+      session.titleIsCustom = true;
+    }
+    if (state.session?.paneId === session.paneId) {
+      state.titleIsCustom = Boolean(name);
+      if (name) $('chat-title').textContent = name;
+    }
+    renderSessions();
+    await refreshSessions(true);
+    toast(name ? `Renamed to ${name}` : 'Name cleared');
+  } catch (err) {
+    toast(err.message, true);
+  }
+}
+
+$('sname-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  void saveSessionName($('sname-input').value.trim());
+});
+$('btn-sname-clear').addEventListener('click', () => void saveSessionName(''));
+$('btn-sname-close').addEventListener('click', closeSessionRename);
+$('sname-sheet').addEventListener('click', (e) => {
+  if (e.target === $('sname-sheet')) closeSessionRename();
+});
 
 /* ---------- thread rendering ---------- */
 
@@ -1344,7 +1486,15 @@ async function openChat(session) {
   state.cursor = null;
   state.hasMore = false;
   state.loadingOlder = false;
-  state.titleIsCustom = false;
+  /*
+   * Seeded from the server, not from false.
+   *
+   * Claude Code writes an `ai-title` record on every turn alongside the `custom-title`,
+   * so a history page whose window happens to hold the automatic one but not the older
+   * rename would overwrite the header with the generated name a moment after the chat
+   * opened — which looked exactly like the rename not having worked.
+   */
+  state.titleIsCustom = session.titleIsCustom === true;
   $('thread').replaceChildren();
   // Same treatment as the list: repo leads, in the accent colour.
   $('chat-title').replaceChildren();
