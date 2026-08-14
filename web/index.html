@@ -147,8 +147,9 @@
   </div>
 </section>
 
-<!-- New session -->
-<div id="sheet" class="sheet">
+<!-- New session. A centred modal: it is a short form plus a list you pick from, not a
+     surface you live in, and it is opened from a toolbar button rather than an edge. -->
+<div id="sheet" class="sheet is-modal">
   <div class="sheet-panel">
     <div class="sheet-head">
       <h2>New session</h2>
@@ -285,6 +286,28 @@
         <button type="submit" class="primary">Save</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Confirm closing a session -->
+<div id="close-sheet" class="sheet is-modal">
+  <div class="sheet-panel">
+    <div class="sheet-head">
+      <h2>Close session?</h2>
+      <button id="btn-close-cancel-x" class="iconbtn" aria-label="Close">✕</button>
+    </div>
+    <div class="add-form">
+      <p id="close-what" class="confirm-what"></p>
+      <p class="confirm-note">
+        The agent is asked to exit first, so it can save its work. Its tmux pane is then
+        closed, which ends the tmux session if nothing else was running in it. The
+        transcript stays on disk and can be resumed.
+      </p>
+      <div class="modal-foot">
+        <button id="btn-close-cancel" type="button" class="ghost">Cancel</button>
+        <button id="btn-close-go" type="button" class="danger">Close session</button>
+      </div>
+    </div>
   </div>
 </div>
 

@@ -42,6 +42,11 @@ export interface Provider {
    * to the text — a stale line then silently prefixes the next thing you send.
    */
   readonly clearKey: string;
+  /**
+   * The slash command that ends a session cleanly. Sent before the pane is closed, so
+   * the agent can flush its transcript and leave the session resumable.
+   */
+  readonly exitCommand: string;
 
   /** Is this agent installed on the machine? Cached by the caller. */
   available(exec: Executor, home: string): Promise<boolean>;

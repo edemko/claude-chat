@@ -217,8 +217,8 @@ default.
 - **Sessions list** — grouped by the project each session runs in. A git repo is
   highlighted; a plain folder is dimmed and labelled as one. Work here is organised by
   project because conversation names repeat across them and a repo is the unit of work.
-- **New session** — pick a repo from `CC_REPO_ROOTS`, or browse to any folder on the
-  machine and create one. The hub launches `claude --session-id <uuid>` in a fresh tmux
+- **New session** — a centred modal: pick the agent, then a repo from `CC_REPO_ROOTS`, or
+  browse to any folder on the machine and create one. The hub launches `claude --session-id <uuid>` in a fresh tmux
   session.
 - **Chat** — messages and expandable tool chips. Markdown, with bold and italic in their
   own colours. Code blocks have a copy button; tap inline code to copy it.
@@ -233,8 +233,11 @@ default.
   becomes the caption.
 - **ⓘ** — model, effort, context tokens, branch, turn counts, uptime, and the pane's own
   status line scraped verbatim.
-- **⋮** — per-session menu: rename, session info, copy path, and (Claude only) pick the
-  right conversation. Names are stored **hub-side**, not typed into the agent, because
+- **⋮** — per-session menu: rename, session info, copy path, close the session, and
+  (Claude only) pick the right conversation. **Close** asks the agent to exit first so it
+  can save its work, then closes its tmux *pane* — never the tmux session, since a
+  session often holds unrelated panes and tmux ends it by itself once the last pane goes.
+  Confirmed before it runs, and the transcript stays on disk and resumable. Names are stored **hub-side**, not typed into the agent, because
   the two disagree about where a name lives — so one mechanism works for both and takes
   effect immediately. Renames done in the terminal are picked up too: Claude Code's
   `custom-title` record is read from the transcript, and Codex's from its SQLite index
@@ -490,6 +493,19 @@ Three Android details that would each have silently broken a release build:
   `custom-title`. So a client that applies "latest title wins" to a history page will
   undo a rename a moment after opening the chat — which looks exactly like the rename
   having failed. `SessionInfo.titleIsCustom` exists to stop that.
+- **`tmux display-message -p -t <dead pane>` prints an empty line and exits 0.** Exit
+  codes say nothing about whether a pane exists, so every check built on one reported a
+  closed pane as alive: a close that had worked perfectly reported failure, and burned
+  its whole 12-second grace period getting there. Enumerate with
+  `list-panes -a -F '#{pane_id}'` instead. The same quirk meant the "pane no longer
+  exists" branch in the send guard could never fire — a send to a closed pane reported
+  the nonsense `pane is running "", not an agent`.
+- Close a *pane*, not a tmux session. `kill-session` because one pane happened to run an
+  agent would take unrelated panes with it; tmux ends a session on its own once the last
+  pane exits, which is exactly the wanted behaviour and needs no special case.
+- Report what you observed, not what each command returned. The first version of the
+  close path returned `kill-pane`'s exit code, which loses a race against an agent that
+  is already exiting — so a successful close reported `paneKilled: false`.
 - A file containing a stray NUL byte is treated as *binary* by grep, which then reports
   nothing at all for a pattern that is plainly present. One had crept into a template
   literal in `commands.ts` — harmless at runtime, invisible to `tsc`, and it silently

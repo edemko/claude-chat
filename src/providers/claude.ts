@@ -843,6 +843,7 @@ export const claudeProvider: Provider = {
   comms: COMMS,
   // Escape clears Claude Code's prompt.
   clearKey: 'Escape',
+  exitCommand: '/exit',
 
   async available(exec: Executor, home: string): Promise<boolean> {
     // The projects directory means Claude Code has run here at least once, which is a

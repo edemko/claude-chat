@@ -978,6 +978,7 @@ code[data-copy='inline'].is-copied {
   gap: 8px;
   padding: 10px var(--pad) calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);
+  flex: 0 0 auto;
 }
 .browse-foot button, .sheet-foot button {
   flex: 1;
@@ -1783,3 +1784,33 @@ button.ghost.is-busy::after { --spin: var(--muted); }
   align-items: baseline;
   gap: 7px;
 }
+
+/* ---------- confirmations ---------- */
+
+.confirm-what {
+  margin: 4px 0 0;
+  font-size: 15px;
+  font-weight: 560;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.confirm-note {
+  margin: 2px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+/* Destructive, and coloured as such — but not the visual default of the dialog. */
+button.danger {
+  background: var(--bad-bg);
+  color: var(--bad);
+  border: 1px solid var(--bad-border);
+}
+button.danger:active { background: var(--bad); color: var(--on-you); }
+
+/*
+ * In the create modal the repo list is the tall part, so it gets the space and
+ * scrolls while the header, provider picker and toggle stay put.
+ */
+.sheet.is-modal #dir-list, .sheet.is-modal #browse-list { max-height: 46dvh; }

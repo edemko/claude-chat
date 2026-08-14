@@ -868,6 +868,8 @@ export const codexProvider: Provider = {
    * nothing at all.
    */
   clearKey: 'C-u',
+  // Codex offers both /quit and /exit; they do the same thing.
+  exitCommand: '/quit',
 
   /*
    * Deliberately looser than `resolveBinary`. Discovery of *existing* sessions needs

@@ -964,7 +964,7 @@ $('add-form').addEventListener('submit', addServer);
 // past needs a keyboard way out.
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
-  for (const id of ['sname-sheet', 'menu-sheet', 'name-sheet', 'add-sheet']) {
+  for (const id of ['close-sheet', 'sname-sheet', 'menu-sheet', 'name-sheet', 'add-sheet']) {
     if ($(id).classList.contains('is-open')) {
       $(id).classList.remove('is-open');
       if (id === 'name-sheet') renamingId = null;
@@ -1203,6 +1203,13 @@ function openSessionMenu(session) {
     );
   }
 
+  items.push(
+    menuItem('Close session', `tmux ${session.tmuxSession}`, () => {
+      closeSessionMenu();
+      confirmClose(session);
+    }, true),
+  );
+
   $('menu-list').replaceChildren(...items);
   $('menu-sheet').classList.add('is-open');
 }
@@ -1273,6 +1280,68 @@ $('btn-sname-clear').addEventListener('click', () => void saveSessionName(''));
 $('btn-sname-close').addEventListener('click', closeSessionRename);
 $('sname-sheet').addEventListener('click', (e) => {
   if (e.target === $('sname-sheet')) closeSessionRename();
+});
+
+/* ---------- closing a session ---------- */
+
+/*
+ * Confirmed, never one tap from a menu: this ends a running agent and closes a
+ * terminal pane, and the tap that opens the menu is next to the tap that would do it.
+ */
+function confirmClose(session) {
+  menuSession = session;
+  $('close-what').replaceChildren(
+    providerBadge(session.provider),
+    document.createTextNode(` ${session.title}`),
+  );
+  $('close-sheet').classList.add('is-open');
+}
+
+function dismissClose() {
+  $('close-sheet').classList.remove('is-open');
+}
+
+async function doClose() {
+  const session = menuSession;
+  if (!session) return dismissClose();
+  const btn = $('btn-close-go');
+  setBusy(btn, true);
+  try {
+    const r = await api(`/api/servers/${session.serverId}/sessions/${session.uuid}/close`, {
+      method: 'POST',
+    });
+    dismissClose();
+    // If the closed session was the one on screen, there is nothing left to show.
+    if (state.session?.paneId === session.paneId) {
+      closeWs();
+      state.session = null;
+      markSession();
+      show('list');
+    }
+    await refreshSessions(true);
+    // Reported from what was observed, not from what each command returned.
+    toast(
+      !r.paneGone
+        ? 'The pane is still open — closing it did not take effect'
+        : r.sessionGone
+          ? `Closed — tmux ${session.tmuxSession} ended`
+          : r.exitedCleanly
+            ? 'Session closed'
+            : 'Pane closed — the agent had not exited on its own',
+      !r.paneGone,
+    );
+  } catch (err) {
+    toast(err.message, true);
+  } finally {
+    setBusy(btn, false);
+  }
+}
+
+$('btn-close-go').addEventListener('click', () => void doClose());
+$('btn-close-cancel').addEventListener('click', dismissClose);
+$('btn-close-cancel-x').addEventListener('click', dismissClose);
+$('close-sheet').addEventListener('click', (e) => {
+  if (e.target === $('close-sheet')) dismissClose();
 });
 
 /* ---------- thread rendering ---------- */

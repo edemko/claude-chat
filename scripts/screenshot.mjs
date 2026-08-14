@@ -204,6 +204,18 @@ const SCENES = {
     await evaluate(`[...document.querySelectorAll('.menu-item')].find(i => i.textContent.startsWith('Rename'))?.click() ?? null`);
     await sleep(600);
   },
+  browse: async () => {
+    await evaluate(`document.getElementById('btn-new').click(); 'ok'`);
+    await sleep(1800);
+    await evaluate(`document.getElementById('btn-browse').click(); 'ok'`);
+    await sleep(1800);
+  },
+  closeconfirm: async () => {
+    await evaluate(`document.querySelector('.session.is-codex .session-more')?.click() ?? null`);
+    await sleep(500);
+    await evaluate(`[...document.querySelectorAll('.menu-item')].find(i => i.textContent.startsWith('Close'))?.click() ?? null`);
+    await sleep(600);
+  },
   drawer: async () => {
     await evaluate(`document.getElementById('btn-menu').click(); 'ok'`);
   },
@@ -350,6 +362,8 @@ const report = await evaluate(`JSON.stringify({
     frame: getComputedStyle(r).boxShadow.replace(/\s+/g, ' ').slice(0, 46),
   })),
   menuItems: [...document.querySelectorAll('.menu-item')].map((i) => i.textContent.trim()),
+  crumbs: [...document.querySelectorAll('.crumb')].map((c) => c.textContent),
+  browseRows: [...document.querySelectorAll('#browse-list .dir')].length,
   submitBusy: document.getElementById('add-submit').classList.contains('is-busy'),
   submitDisabled: document.getElementById('add-submit').disabled,
   addError: document.getElementById('add-error').textContent || null,
