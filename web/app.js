@@ -18,6 +18,12 @@ const state = {
   session: null,
   /** Remote home directory, for showing `~/Dev/x` rather than `/home/you/Dev/x`. */
   home: null,
+  /** Sessions per agent, for the filter chips' counts. */
+  counts: {},
+  /** null shows every agent; otherwise narrow to this one. A filter, not a mode. */
+  providerFilter: null,
+  /** Agents the active server reports it can actually run. */
+  providers: [],
   /** id -> element, so live batches append instead of re-rendering the thread. */
   nodes: new Map(),
   /** tool_use_id -> {ok, preview}; results can arrive before or after their chip. */
@@ -233,6 +239,85 @@ function fmtWhen(ts) {
 }
 
 const repoOf = (cwd) => cwd.split('/').filter(Boolean).pop() ?? cwd;
+
+/* ---------- providers ---------- */
+
+const PROVIDER_LABEL = { claude: 'claude', codex: 'codex' };
+
+/**
+ * The sessions to show: everything, or one agent's.
+ *
+ * A filter rather than a mode, and that distinction is the whole design. The agent is
+ * a property of the pane — one machine runs both at once, and the same repo can have
+ * one of each — so a mode that hid the others would let a notification arrive for a
+ * session the interface is pretending does not exist.
+ */
+function visibleSessions() {
+  const filter = state.providerFilter;
+  if (!filter) return state.sessions;
+  return state.sessions.filter((s) => s.provider === filter);
+}
+
+function providerBadge(provider) {
+  return mk('span', `prov is-${provider}`, [PROVIDER_LABEL[provider] ?? provider]);
+}
+
+/*
+ * Fixed chip order.
+ *
+ * `counts` is built by walking the session list, which is sorted by activity — so
+ * `Object.keys` order changes whenever a different agent was last to speak, and the
+ * chips swapped places between two polls. Same reason the favourites bar keeps the
+ * drawer's order: a control that moves under your thumb is worse than one that is
+ * occasionally in an odd order.
+ */
+const PROVIDER_ORDER = ['claude', 'codex'];
+
+function renderProviderBar() {
+  const bar = $('prov-bar');
+  const counts = state.counts ?? {};
+  const kinds = [
+    ...PROVIDER_ORDER.filter((k) => counts[k] > 0),
+    // Anything a newer hub reports that this build has never heard of still shows.
+    ...Object.keys(counts).filter((k) => counts[k] > 0 && !PROVIDER_ORDER.includes(k)).sort(),
+  ];
+
+  // One agent means nothing to filter, so the row is not drawn at all.
+  if (kinds.length < 2) {
+    bar.hidden = true;
+    bar.replaceChildren();
+    // A filter left over from another server would silently hide everything.
+    if (state.providerFilter && !kinds.includes(state.providerFilter)) {
+      state.providerFilter = null;
+    }
+    return;
+  }
+
+  const total = kinds.reduce((sum, k) => sum + counts[k], 0);
+  const chip = (label, count, value) => {
+    const on = state.providerFilter === value;
+    const el = mk('button', `pchip${on ? ' is-on' : ''}`, [
+      label,
+      mk('span', 'n', [String(count)]),
+    ]);
+    el.type = 'button';
+    el.setAttribute('aria-pressed', on ? 'true' : 'false');
+    el.addEventListener('click', () => {
+      // Tapping the active chip clears the filter, so there is always a way back to
+      // everything without hunting for an "all" button.
+      state.providerFilter = on ? null : value;
+      renderProviderBar();
+      renderSessions();
+    });
+    return el;
+  };
+
+  bar.replaceChildren(
+    chip('All', total, null),
+    ...kinds.map((k) => chip(PROVIDER_LABEL[k] ?? k, counts[k], k)),
+  );
+  bar.hidden = false;
+}
 
 /** `/home/you/Dev/x` -> `~/Dev/x`, once the hub has told us where home is. */
 function tildify(path) {
@@ -919,6 +1004,9 @@ function sessionRow(session) {
   title.className = 'session-title';
   title.textContent = session.title;
 
+  // The agent, beside the name. Two sessions in one repo are routinely one of each.
+  const titleRow = mk('div', 'session-title-row', [title, providerBadge(session.provider)]);
+
   const meta = document.createElement('div');
   meta.className = 'session-meta meta';
   const where = document.createElement('span');
@@ -929,7 +1017,7 @@ function sessionRow(session) {
   when.textContent = fmtWhen(session.lastActivity);
   meta.append(where, when);
 
-  body.append(title, meta);
+  body.append(titleRow, meta);
 
   if (session.lastMessage) {
     const preview = document.createElement('div');
@@ -985,13 +1073,25 @@ function projectGroup(group) {
 
 function renderSessions() {
   const list = $('session-list');
-  if (state.sessions.length === 0) {
-    list.innerHTML =
-      '<div class="empty"><strong>No sessions running</strong>' +
-      'Tap ＋ to start Claude in one of your repos.</div>';
+  const shown = visibleSessions();
+
+  if (shown.length === 0) {
+    // Distinguish "nothing running" from "the filter is hiding it all" — the second
+    // has an obvious fix and should say so rather than looking like an empty server.
+    list.replaceChildren(
+      state.sessions.length > 0 && state.providerFilter
+        ? mk('div', 'empty', [
+            mk('strong', '', [`No ${PROVIDER_LABEL[state.providerFilter]} sessions`]),
+            `${state.sessions.length} running under another agent — tap All to see them.`,
+          ])
+        : mk('div', 'empty', [
+            mk('strong', '', ['No sessions running']),
+            'Tap ＋ to start an agent in one of your repos.',
+          ]),
+    );
     return;
   }
-  list.replaceChildren(...groupSessions(state.sessions).map(projectGroup));
+  list.replaceChildren(...groupSessions(shown).map(projectGroup));
 }
 
 async function refreshSessions(fresh = false) {
@@ -1002,6 +1102,8 @@ async function refreshSessions(fresh = false) {
     );
     state.sessions = data.sessions;
     if (data.home) state.home = data.home;
+    state.counts = data.counts ?? {};
+    renderProviderBar();
     renderSessions();
     syncOpenSession();
   } catch (err) {
@@ -1251,10 +1353,12 @@ async function openChat(session) {
   chatRepo.textContent = repoOf(session.cwd);
   $('chat-title').append(chatRepo, document.createTextNode(`  ${session.title}`));
   $('chat-meta').textContent =
-    `${session.serverId} · pane ${session.paneId} · ` +
+    `${PROVIDER_LABEL[session.provider] ?? session.provider} · pane ${session.paneId} · ` +
     `${session.confidence === 'pending' ? 'no transcript yet' : session.uuid.slice(0, 8)}`;
+  applyKeyBar(session.provider);
   $('chat-bead').className = `bead${session.status === 'working' ? ' is-working' : ''}`;
-  if (session.confidence === 'weak') showGuessNotice();
+  // Only Claude Code produces a weak match; codex is exact or has no transcript yet.
+  if (session.confidence === 'weak' && session.provider === 'claude') showGuessNotice();
   else setNotice('');
   show('chat');
   markSession();
@@ -1314,6 +1418,8 @@ function connectWs(session) {
     } else if (msg.type === 'sessions') {
       state.sessions = msg.sessions;
       if (msg.home) state.home = msg.home;
+      state.counts = msg.counts ?? state.counts;
+      renderProviderBar();
       renderSessions();
       syncOpenSession();
     } else if (msg.type === 'error') {
@@ -1409,15 +1515,19 @@ const cmd = {
 };
 
 async function loadCommands(session) {
-  if (!session || cmd.forCwd === session.cwd) return;
-  cmd.forCwd = session.cwd;
+  // Keyed by provider too: the same directory has different commands under each
+  // agent, and keying on the path alone showed Claude's list inside a Codex session.
+  const key = `${session?.provider}:${session?.cwd}`;
+  if (!session || cmd.forCwd === key) return;
+  cmd.forCwd = key;
   cmd.list = [];
   try {
     const data = await api(
-      `/api/servers/${session.serverId}/commands?cwd=${encodeURIComponent(session.cwd)}`,
+      `/api/servers/${session.serverId}/commands?cwd=${encodeURIComponent(session.cwd)}` +
+        `&provider=${encodeURIComponent(session.provider)}`,
     );
     // A reply for a session we have since left must not become this one's catalogue.
-    if (state.session?.cwd === session.cwd) {
+    if (state.session?.cwd === session.cwd && state.session?.provider === session.provider) {
       cmd.list = data.commands;
       updateComposer();
     }
@@ -1432,9 +1542,10 @@ async function commandsForHelp() {
   if (cmd.list.length > 0) return cmd.list;
   if (!state.serverId) return [];
   const cwd = state.session?.cwd;
-  const data = await api(
-    `/api/servers/${state.serverId}/commands${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`,
-  );
+  const provider = state.session?.provider ?? state.providers[0] ?? 'claude';
+  const query = new URLSearchParams({ provider });
+  if (cwd) query.set('cwd', cwd);
+  const data = await api(`/api/servers/${state.serverId}/commands?${query}`);
   return data.commands;
 }
 
@@ -1818,6 +1929,35 @@ compose.addEventListener('paste', (e) => {
   void sendImage(file);
 });
 
+/*
+ * The composer-clearing key differs per agent, so the bar is relabelled rather than
+ * sending the wrong one. `Escape` clears Claude Code's prompt; in Codex it leaves the
+ * text alone and a stale line then prefixes whatever is sent next. The client sends
+ * the logical name `clear` and the hub picks the binding.
+ */
+const CLEAR_LABEL = { claude: 'esc', codex: '^U' };
+
+function applyKeyBar(provider) {
+  const btn = document.querySelector('.key[data-key="clear"]');
+  if (btn) {
+    btn.textContent = CLEAR_LABEL[provider] ?? 'esc';
+    btn.title =
+      provider === 'codex'
+        ? 'Ctrl-U — clears the composer (Escape does not, in Codex)'
+        : 'Escape — clears the prompt or dismisses a menu';
+  }
+
+  /*
+   * "conversation" corrects a guessed pane→transcript match, and only Claude Code
+   * ever guesses — Codex names its own transcript on a file descriptor, so its match
+   * is always exact. Left visible it was not merely useless: it calls an endpoint
+   * that only knows how to inspect a Claude pane, so it would fail with an error
+   * about the session not being a Claude one.
+   */
+  const pick = $('btn-pick');
+  if (pick) pick.hidden = provider === 'codex';
+}
+
 for (const key of document.querySelectorAll('.key[data-key]')) {
   key.addEventListener('click', async () => {
     if (!state.session) return;
@@ -2010,12 +2150,21 @@ async function openInfo() {
     }
 
     const turns = d.turns || {};
+    // A raw token count means little; against the window it is immediately readable.
+    const context =
+      d.contextTokens && d.contextWindow
+        ? `${fmtTokens(d.contextTokens)} / ${fmtTokens(d.contextWindow)} · ` +
+          `${Math.round((d.contextTokens / d.contextWindow) * 100)}%`
+        : `${fmtTokens(d.contextTokens)} tokens`;
     body.append(infoRows([
+      ['agent', PROVIDER_LABEL[session.provider] ?? session.provider],
       ['model', [d.model || '—', d.effort].filter(Boolean).join(' · ')],
-      ['context', `${fmtTokens(d.contextTokens)} tokens`],
+      ['context', context],
       ['directory', session.cwd],
       ['branch', d.gitBranch],
-      ['turns', `${turns.user ?? 0} you · ${turns.assistant ?? 0} claude · ${turns.tools ?? 0} tools`],
+      // Named after the agent, not hardcoded — this read "13 claude" inside a Codex
+      // session, which is exactly the sort of detail that makes a UI feel bolted on.
+      ['turns', `${turns.user ?? 0} you · ${turns.assistant ?? 0} ${PROVIDER_LABEL[session.provider] ?? 'agent'} · ${turns.tools ?? 0} tools`],
       ['started', fmtStamp(d.startedAt)],
       ['pane up', fmtDuration(d.uptimeSeconds)],
       ['last active', fmtWhen(session.lastActivity)],
@@ -2024,6 +2173,16 @@ async function openInfo() {
     const rule = document.createElement('div');
     rule.className = 'info-rule';
     body.append(rule);
+
+    // Provider extras: Codex reports rate limits, sandbox policy and collaboration
+    // mode as data. Claude Code computes the equivalent privately and shows it only
+    // through the scraped status line above, so this block is simply empty there.
+    if (Array.isArray(d.extra) && d.extra.length > 0) {
+      body.append(infoRows(d.extra.map((e) => [e.label, e.value])));
+      const rule = document.createElement('div');
+      rule.className = 'info-rule';
+      body.append(rule);
+    }
 
     body.append(infoRows([
       ['pane', `${session.paneId} · tmux ${session.tmuxSession}`],
@@ -2050,6 +2209,48 @@ $('info-sheet').addEventListener('click', (e) => {
 
 /* ---------- new session ---------- */
 
+/** Which agent ＋ will launch. Defaults to the first the server reports. */
+let newProvider = null;
+
+function renderNewProvider() {
+  const host = $('new-prov');
+  const list = state.providers ?? [];
+  // Nothing to choose between: one agent, or a hub too old to report any.
+  if (list.length < 2) {
+    host.hidden = true;
+    host.replaceChildren();
+    newProvider = list[0] ?? null;
+    return;
+  }
+  if (!list.includes(newProvider)) newProvider = list[0];
+  host.replaceChildren(
+    ...list.map((id) => {
+      const btn = mk('button', newProvider === id ? 'is-on' : '', [
+        PROVIDER_LABEL[id] ?? id,
+      ]);
+      btn.type = 'button';
+      btn.setAttribute('aria-pressed', newProvider === id ? 'true' : 'false');
+      btn.addEventListener('click', () => {
+        newProvider = id;
+        renderNewProvider();
+        renderPermsLabel();
+      });
+      return btn;
+    }),
+  );
+  host.hidden = false;
+}
+
+/** The bypass flag is named differently by each agent; say which one is meant. */
+function renderPermsLabel() {
+  const label = $('skip-perms-label');
+  if (!label) return;
+  label.textContent =
+    newProvider === 'codex'
+      ? 'Bypass approvals and sandbox — the session acts without asking'
+      : 'Skip permission prompts — the session acts without asking';
+}
+
 async function openSheet() {
   $('sheet').classList.add('is-open');
   showBrowser(false);
@@ -2057,6 +2258,9 @@ async function openSheet() {
   list.innerHTML = '<div class="empty">Looking for repos…</div>';
   try {
     const data = await api(`/api/servers/${state.serverId}/dirs`);
+    state.providers = data.providers ?? [];
+    renderNewProvider();
+    renderPermsLabel();
     if (data.dirs.length === 0) {
       // Name the paths that were actually searched. "Set CC_REPO_ROOTS" alone is
       // unhelpful precisely when you are new and have not set it.
@@ -2092,11 +2296,16 @@ async function openSheet() {
 
 async function startSession(dir) {
   $('sheet').classList.remove('is-open');
-  toast(`Starting Claude in ${repoOf(dir)}…`);
+  const which = newProvider ?? state.providers[0] ?? 'claude';
+  toast(`Starting ${PROVIDER_LABEL[which] ?? which} in ${repoOf(dir)}…`);
   try {
     const created = await api(`/api/servers/${state.serverId}/sessions`, {
       method: 'POST',
-      body: JSON.stringify({ dir, skipPermissions: $('skip-perms').checked }),
+      body: JSON.stringify({
+        dir,
+        skipPermissions: $('skip-perms').checked,
+        provider: which,
+      }),
     });
     await refreshSessions(true);
     const session = state.sessions.find((s) => s.uuid === created.uuid);

@@ -1,7 +1,7 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import type { Executor } from './exec.js';
-import { parseRecords, recordToEvents } from './transcript.js';
-import type { ChatEvent } from './types.js';
+import { parseRecords } from './transcript.js';
+import type { ChatEvent, ToEvents } from './types.js';
 
 export type Listener = (events: ChatEvent[]) => void;
 
@@ -26,6 +26,8 @@ class TranscriptStream {
   constructor(
     private readonly exec: Executor,
     private readonly path: string,
+    /** How this file's records become events — the one provider-specific piece. */
+    private readonly toEvents: ToEvents,
   ) {}
 
   start(): void {
@@ -54,7 +56,7 @@ class TranscriptStream {
     if (lines.length === 0) return;
 
     const records = parseRecords(lines.join('\n'), false);
-    for (const rec of records) this.pending.push(...recordToEvents(rec));
+    for (const rec of records) this.pending.push(...this.toEvents(rec));
     if (this.pending.length > 0 && !this.timer) {
       this.timer = setTimeout(() => this.flush(), FLUSH_MS);
     }
@@ -90,11 +92,17 @@ class TranscriptStream {
 export class StreamHub {
   private streams = new Map<string, TranscriptStream>();
 
-  subscribe(exec: Executor, serverId: string, path: string, listener: Listener): () => void {
+  subscribe(
+    exec: Executor,
+    serverId: string,
+    path: string,
+    toEvents: ToEvents,
+    listener: Listener,
+  ): () => void {
     const key = `${serverId}:${path}`;
     let stream = this.streams.get(key);
     if (!stream) {
-      stream = new TranscriptStream(exec, path);
+      stream = new TranscriptStream(exec, path, toEvents);
       this.streams.set(key, stream);
     }
     stream.listeners.add(listener);

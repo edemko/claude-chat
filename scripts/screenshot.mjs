@@ -145,6 +145,22 @@ const openFirstSession = async () => {
 const SCENES = {
   list: async () => {},
   chat: openFirstSession,
+  // The Codex session specifically, wherever it sits in the list.
+  codex: async () => {
+    await evaluate(`
+      (() => {
+        const badge = [...document.querySelectorAll('.prov.is-codex')][0];
+        badge?.closest('.session')?.click();
+        return 'ok';
+      })()
+    `);
+    await sleep(3000);
+  },
+  codexinfo: async () => {
+    await SCENES.codex();
+    await evaluate(`document.getElementById('btn-info').click(); 'ok'`);
+    await sleep(2500);
+  },
   cmd: async () => {
     await openFirstSession();
     await typeInto('/co');
@@ -156,6 +172,15 @@ const SCENES = {
   unknown: async () => {
     await openFirstSession();
     await typeInto('/nosuchthing here');
+  },
+  // The chip row only exists when a server runs more than one agent.
+  filter: async () => {
+    await evaluate(`document.querySelector('.pchip:not(.is-on)')?.click() ?? null`);
+    await sleep(400);
+  },
+  newsession: async () => {
+    await evaluate(`document.getElementById('btn-new').click(); 'ok'`);
+    await sleep(2000);
   },
   drawer: async () => {
     await evaluate(`document.getElementById('btn-menu').click(); 'ok'`);
@@ -282,6 +307,17 @@ const report = await evaluate(`JSON.stringify({
     return c.scrollHeight > c.clientHeight;
   })(),
   dropVeil: !document.getElementById('drop-veil').hidden,
+  providerBar: document.getElementById('prov-bar').hidden
+    ? null
+    : [...document.querySelectorAll('.pchip')].map((c) => c.textContent.trim()),
+  badges: [...document.querySelectorAll('.prov')].map((b) => b.textContent),
+  rows: [...document.querySelectorAll('.session-title')].map((t) => t.textContent.slice(0, 34)),
+  newProviders: document.getElementById('new-prov').hidden
+    ? null
+    : [...document.querySelectorAll('#new-prov button')].map(
+        (b) => b.textContent + (b.classList.contains('is-on') ? '*' : ''),
+      ),
+  clearKey: document.querySelector('.key[data-key="clear"]')?.textContent ?? null,
   submitBusy: document.getElementById('add-submit').classList.contains('is-busy'),
   submitDisabled: document.getElementById('add-submit').disabled,
   addError: document.getElementById('add-error').textContent || null,

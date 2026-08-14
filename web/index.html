@@ -54,6 +54,9 @@
     <button id="btn-refresh" class="iconbtn" aria-label="Refresh sessions">⟳</button>
     <button id="btn-new" class="iconbtn" aria-label="New session">＋</button>
   </header>
+  <!-- Only rendered when a server actually has more than one agent, so the common
+       single-agent case gains no furniture. -->
+  <div id="prov-bar" class="prov-bar" hidden></div>
   <div id="session-list" class="scroll"></div>
   <!-- Starred servers, for switching without opening the drawer. Empty until
        something is starred, and hidden entirely rather than sitting there blank. -->
@@ -108,7 +111,8 @@
     <div id="cmd-pop" class="cmd-pop" hidden role="listbox" aria-label="Slash commands"></div>
     <div id="cmd-hint" class="cmd-hint" hidden></div>
     <div class="keybar">
-      <button class="key" data-key="escape">esc</button>
+      <!-- Relabelled per agent by applyKeyBar: esc for Claude, ^U for Codex. -->
+      <button class="key" data-key="clear">esc</button>
       <button class="key" data-key="ctrl-c">^C</button>
       <button class="key" data-key="up">↑</button>
       <button class="key" data-key="down">↓</button>
@@ -150,9 +154,13 @@
       <h2>New session</h2>
       <button id="btn-sheet-close" class="iconbtn" aria-label="Close">✕</button>
     </div>
+    <!-- Which agent to launch. Filled from what the hub reports it can see, so a
+         machine without Codex never offers it. Hidden when there is only one. -->
+    <div id="new-prov" class="new-prov" hidden></div>
+
     <label class="toggle">
       <input type="checkbox" id="skip-perms" checked>
-      <span>Skip permission prompts — the session acts without asking</span>
+      <span id="skip-perms-label">Skip permission prompts — the session acts without asking</span>
     </label>
 
     <!-- Quick list: repos found under CC_REPO_ROOTS. -->

@@ -464,6 +464,7 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   color: var(--muted);
 }
 .key:active { background: var(--raised); color: var(--text); }
+.key[hidden] { display: none; }
 
 .compose-row {
   display: flex;
@@ -1598,3 +1599,103 @@ button.ghost.is-busy::after { --spin: var(--muted); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------- providers ---------- */
+
+/*
+ * A session's agent, on its row. Sessions from both agents sit in one list because
+ * the agent is a property of the pane, not of the machine — the same repo can have
+ * one of each running at once, and hiding either behind a mode switch means a
+ * notification can arrive for a session the UI is pretending does not exist.
+ */
+.prov {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+/* Distinct hues, both contrast-checked against either theme's panel. */
+.prov.is-claude { color: var(--you); border-color: var(--you); opacity: 0.85; }
+.prov.is-codex { color: var(--ok); border-color: var(--ok); opacity: 0.9; }
+
+.session-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+.session-title-row .session-title { flex: 1; min-width: 0; }
+
+/* Filter chips. A filter over what is there, never a mode that hides it. */
+.prov-bar {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 7px;
+  padding: 9px var(--pad);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.prov-bar::-webkit-scrollbar { display: none; }
+.prov-bar[hidden] { display: none; }
+
+.pchip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 5px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.pchip .n {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  opacity: 0.75;
+}
+.pchip:active { background: var(--raised); }
+.pchip.is-on {
+  border-color: var(--you);
+  color: var(--you);
+  font-weight: 600;
+}
+
+/* Provider picker in the create sheet. */
+.new-prov {
+  display: flex;
+  gap: 8px;
+  padding: 13px var(--pad);
+  border-bottom: 1px solid var(--line);
+}
+.new-prov[hidden] { display: none; }
+.new-prov button {
+  flex: 1;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 14px;
+}
+.new-prov button.is-on {
+  border-color: var(--you);
+  color: var(--you);
+  font-weight: 620;
+}
+
+/* ---------- ⓘ extras ---------- */
+
+/*
+ * Provider-supplied rows: rate-limit windows, sandbox policy, collaboration mode.
+ * Codex publishes these as data where Claude Code computes them privately and hands
+ * them only to a status-line command, so this block is where the two sheets differ.
+ */
+.info-extra { margin-top: 2px; }

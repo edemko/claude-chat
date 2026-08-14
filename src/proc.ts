@@ -1,6 +1,6 @@
 import type { Executor } from './exec.js';
 import { q } from './shell.js';
-import type { ClaudeProc, PaneInfo } from './types.js';
+import type { AgentProc, PaneInfo } from './types.js';
 
 const D = '|~|';
 
@@ -102,19 +102,25 @@ function splitSections(stdout: string): Record<string, string> {
 }
 
 /**
- * Find the `claude` process belonging to a pane. Claude is normally a direct child
- * of the pane's shell, but wrappers (`zsh -lc claude`, a `script` wrapper) can add
- * a level or two, so descend a bounded depth.
+ * Find an agent process belonging to a pane, given the process names that count.
+ *
+ * The agent is normally a direct child of the pane's shell, but wrappers
+ * (`zsh -lc claude`, a `script` wrapper) can add a level or two, so descend a
+ * bounded depth. Both providers turn up in both shapes: sessions this app creates
+ * run `zsh -lc <agent>` and the shell *exec's* into the agent, so the pane's own
+ * process is the agent and there is no child to find; a session started by hand at
+ * an interactive prompt is a child instead.
  */
-export function findClaudeInPane(pane: PaneInfo, ps: readonly PsRow[], maxDepth = 3): PsRow | null {
-  /*
-   * The pane's own process may already be claude. Sessions this app creates run
-   * `zsh -lc claude`, and the shell exec's into claude rather than forking it, so
-   * there is no child to find — only a manually started session has claude as a
-   * child of an interactive shell.
-   */
+export function findAgentInPane(
+  pane: PaneInfo,
+  ps: readonly PsRow[],
+  comms: readonly string[],
+  maxDepth = 3,
+): PsRow | null {
+  const wanted = new Set(comms);
+
   const self = ps.find((row) => row.pid === pane.panePid);
-  if (self?.comm === 'claude') return self;
+  if (self && wanted.has(self.comm)) return self;
 
   const byParent = new Map<number, PsRow[]>();
   for (const row of ps) {
@@ -128,7 +134,7 @@ export function findClaudeInPane(pane: PaneInfo, ps: readonly PsRow[], maxDepth 
     const next: number[] = [];
     for (const pid of frontier) {
       for (const child of byParent.get(pid) ?? []) {
-        if (child.comm === 'claude') return child;
+        if (wanted.has(child.comm)) return child;
         next.push(child.pid);
       }
     }
@@ -139,30 +145,48 @@ export function findClaudeInPane(pane: PaneInfo, ps: readonly PsRow[], maxDepth 
 }
 
 /**
- * Confirm each candidate process really belongs to the pane we think it does, and
- * read its working directory. `claude` exports TMUX_PANE, which is authoritative —
- * far better than trusting the process-tree walk alone.
+ * Confirm each candidate process really belongs to the pane we think it does, read
+ * its working directory, and — when asked — which of its open files match a pattern.
+ *
+ * Both agents export TMUX_PANE, which is authoritative and far better than trusting
+ * the process-tree walk alone.
+ *
+ * `fdMatch` is what makes Codex exact: it holds its own rollout transcript open, so
+ * one `ls -l /proc/<pid>/fd` names the session's file outright. Folded into this same
+ * script rather than a follow-up call, because over SSH each command is a round trip.
  */
-export async function enrichClaudeProcs(
+export async function enrichAgentProcs(
   exec: Executor,
   pids: readonly number[],
   now: number,
   etimesByPid: ReadonlyMap<number, number>,
-): Promise<ClaudeProc[]> {
+  fdMatch?: string,
+): Promise<AgentProc[]> {
   if (pids.length === 0) return [];
 
   const script = pids
-    .map(
-      (pid) =>
-        `echo "###P${pid}"; readlink /proc/${pid}/cwd 2>/dev/null; ` +
+    .map((pid) => {
+      const parts = [
+        `echo "###P${pid}"`,
+        `readlink /proc/${pid}/cwd 2>/dev/null`,
         `tr '\\0' '\\n' < /proc/${pid}/environ 2>/dev/null | grep '^TMUX_PANE=' || true`,
-    )
+      ];
+      if (fdMatch) {
+        // Only the link targets, one per line, prefixed so they cannot be confused
+        // with the cwd line above.
+        parts.push(
+          `for f in /proc/${pid}/fd/*; do t=$(readlink "$f" 2>/dev/null); ` +
+            `case "$t" in *${fdMatch}*) echo "FD=$t";; esac; done 2>/dev/null || true`,
+        );
+      }
+      return parts.join('; ');
+    })
     .join('\n');
 
-  const { stdout } = await exec.runShell(script);
+  const { stdout } = await exec.runShell(script, { timeoutMs: 20_000 });
   const sections = splitSections(stdout);
 
-  const out: ClaudeProc[] = [];
+  const out: AgentProc[] = [];
   for (const pid of pids) {
     const body = sections[`P${pid}`];
     if (!body) continue;
@@ -176,6 +200,7 @@ export async function enrichClaudeProcs(
       startEpoch: now - etimes,
       paneId: paneLine.slice('TMUX_PANE='.length).trim(),
       cwd,
+      openFiles: lines.filter((l) => l.startsWith('FD=')).map((l) => l.slice(3)),
     });
   }
   return out;

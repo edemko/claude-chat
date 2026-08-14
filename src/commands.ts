@@ -337,21 +337,34 @@ const CATALOGUE_TTL_MS = 30_000;
  * `cwd` brings in that project's `.claude/commands` and `.claude/skills`; without it
  * only the user-wide ones are listed.
  */
+export interface CatalogueOpts {
+  /**
+   * Built-ins to use instead of reading Claude Code's binary. Codex supplies its own
+   * curated list: its command names and descriptions sit in separate string runs in a
+   * Rust binary, so a scan yields both halves with no reliable pairing between them.
+   */
+  builtins?: SlashCommand[];
+  /** Config directory name under $HOME and the project: `.claude`, `.codex`. */
+  configDir?: string;
+}
+
 export async function listCommands(
   exec: Executor,
   home: string,
   cwd: string | null,
+  opts: CatalogueOpts = {},
 ): Promise<CommandCatalogue> {
-  const cacheKey = `${exec.id} ${cwd ?? ''}`;
+  const configDir = opts.configDir ?? '.claude';
+  const cacheKey = `${exec.id} ${configDir} ${cwd ?? ''}`;
   const hit = catalogueCache.get(cacheKey);
   if (hit && Date.now() - hit.at < CATALOGUE_TTL_MS) return hit.catalogue;
 
-  const roots: Root[] = [{ scope: 'user', dir: `${home}/.claude` }];
+  const roots: Root[] = [{ scope: 'user', dir: `${home}/${configDir}` }];
   // A session already rooted at home would otherwise read the same directory twice.
-  if (cwd && cwd !== home) roots.push({ scope: 'project', dir: `${cwd}/.claude` });
+  if (cwd && cwd !== home) roots.push({ scope: 'project', dir: `${cwd}/${configDir}` });
 
   const [builtin, custom] = await Promise.all([
-    builtins(exec),
+    opts.builtins ? Promise.resolve(opts.builtins) : builtins(exec),
     customCommands(exec, roots).catch((err: unknown) => {
       console.error('[commands] custom command scan failed:', err);
       return [] as SlashCommand[];

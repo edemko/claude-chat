@@ -1,6 +1,7 @@
 # claude-chat
 
-Chat with the Claude Code sessions running on your servers, from your phone.
+Chat with the coding-agent sessions running on your servers, from your phone.
+**Claude Code and OpenAI Codex**, in one list.
 
 One tmux-hosted session = one conversation. It exists to solve a narrow, real problem:
 typing into a terminal over SSH on Android is miserable, but talking to a coding agent is
@@ -19,7 +20,34 @@ phone ──── HTTP + WebSocket over Tailscale ────►  hub (this re
 
 Two clients, same API: a **PWA** served by the hub itself (no build step, updates on
 reload) and a **native Android app** in `flutter_client/`. The PWA is the one to start
-with.
+with — it is also the only one with the newer features.
+
+### Two agents, one list
+
+The agent is a property of the **pane**, not of the machine: one server routinely runs
+`claude` in one pane and `codex` in another, in the same repo, at the same time. So both
+appear in one list with a provider badge, and the filter chips above it narrow rather
+than switch. A mode that hid one agent would mean a notification could arrive for a
+session the interface was pretending did not exist.
+
+Which agents a machine has is reported by the hub, so a server without Codex never
+offers it.
+
+The two are not symmetrical, and the asymmetry is the interesting part:
+
+| | Claude Code | Codex |
+|---|---|---|
+| transcript | `~/.claude/projects/<slug>/<uuid>.jsonl` | `~/.codex/sessions/<date>/rollout-…-<uuid>.jsonl` |
+| pane → session | **inferred** — nothing holds the file open | **exact** — the process holds it on an fd |
+| match confidence | `exact`/`strong`/`weak`/`pending` | `exact` or `pending`, never a guess |
+| context + limits | computed privately; scraped off the status line | fields in the transcript |
+| clears the composer | `Escape` | `C-u` — Escape leaves the text |
+| bypass flag | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` |
+
+Codex holding its transcript open is the whole reason its provider is a third the size
+of Claude Code's: `readlink /proc/<pid>/fd/*` answers the question that the confidence
+ladder, birth-time correlation, screen-content matching and manual picker all exist to
+guess at.
 
 ## What you need
 
@@ -355,6 +383,7 @@ npm run typecheck
 node scripts/test-discovery.mjs    # dedupe + status-line scraping, no server needed
 node scripts/test-markdown.mjs     # markdown renderer against a DOM stub
 node scripts/test-commands.mjs     # slash-command parsing and ranking
+node scripts/test-codex.mjs        # Codex record shapes, against real fixtures
 node scripts/smoke-ws.mjs          # end-to-end live stream, throwaway session
 ```
 
@@ -415,6 +444,25 @@ Three Android details that would each have silently broken a release build:
   jitters ±1 s, silently breaks every lookup. Key on pid.
 - Never `pkill node` on a box running Claude Code; every session is a node process. And
   `pkill -f dist/server.js` matches your own shell — use `lsof -ti tcp:7420`.
+- Codex's `token_count` has two usage blocks and only one of them is the context:
+  `total_token_usage` is cumulative for the whole session, `last_token_usage` is the
+  live context. On a real session the cumulative figure was 510639 against a
+  258400-token window — 198% of a context that was in fact about a quarter full. The
+  SQLite index's `tokens_used` mirrors the cumulative one, so it is the same trap.
+- Codex writes `turn_context` once **per turn**, at the start of that turn — so on a
+  session with long turns the newest one is far from the end of the file (684 KB back,
+  measured). Reading the tail silently loses the model and approval mode; grep for it.
+- `FileChange.changes` is an object keyed by absolute path, not an array of records.
+  Read as an array, every edit chip was labelled with a fragment of its own diff.
+- Codex content blocks are inconsistently cased: `{type:"text"}` in a `UserMessage`,
+  `{type:"Text"}` in an `AgentMessage`. Match on the presence of `text`, not the tag.
+- A grep window cut mid-record leaves an **unterminated** JSON string, so a pattern
+  that requires the closing quote matches nothing. This cost a debugging round: the
+  session titles came back empty while the same grep worked fine in a shell.
+- A file containing a stray NUL byte is treated as *binary* by grep, which then reports
+  nothing at all for a pattern that is plainly present. One had crept into a template
+  literal in `commands.ts` — harmless at runtime, invisible to `tsc`, and it silently
+  broke every `grep` against that file until it was found by reading bytes.
 - A flex item will not shrink below its content unless given `min-width: 0`. One long
   `cwd` in the sidebar made it 1113 px wide instead of 340, and `flex: 0 0 340px` looked
   like it should have prevented exactly that.
@@ -439,7 +487,11 @@ Three Android details that would each have silently broken a release build:
 ```
 src/exec.ts        Executor interface, LocalExecutor, SshExecutor
 src/proc.ts        one-round-trip probe: clock, home, panes, process table
-src/discovery.ts   pane→transcript resolution, confidence, dedupe, manual bind
+src/discovery.ts   orchestrator: asks each provider off one probe, merges, dedupes
+src/providers/     one file per agent — the only place the two differ
+  index.ts         the Provider interface, registry, and per-machine availability
+  claude.ts        record meaning + the pane→transcript inference it needs
+  codex.ts         rollout parsing; discovery is a readlink, so it is much shorter
 src/transcript.ts  slug rules, JSONL parsing, record→chat-event mapping
 src/stream.ts      ref-counted `tail -F` per transcript, coalesced batches
 src/input.ts       send-keys, bracketed paste, key whitelist, not-claude guard

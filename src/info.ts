@@ -1,5 +1,8 @@
 /**
- * Session detail for the "i" sheet.
+ * Session detail for the "i" sheet — Claude Code's half.
+ *
+ * Codex's equivalent lives in `providers/codex.ts` and is much shorter, because every
+ * number here that has to be scraped off a terminal is a field in its transcript.
  *
  * Two sources, deliberately kept apart:
  *
@@ -15,24 +18,7 @@
 import type { Executor } from './exec.js';
 import { q } from './shell.js';
 import { readRecords } from './transcript.js';
-import type { SessionInfo } from './types.js';
-
-export interface SessionDetail {
-  /** Rendered status line as it appears in the pane, one entry per line. */
-  statusLine: string[];
-  model: string | null;
-  effort: string | null;
-  version: string | null;
-  gitBranch: string | null;
-  /** Tokens in the last request's context: input + cache read + cache creation. */
-  contextTokens: number | null;
-  outputTokens: number | null;
-  turns: { user: number; assistant: number; tools: number };
-  startedAt: number | null;
-  transcriptBytes: number | null;
-  /** Seconds the claude process has been running. */
-  uptimeSeconds: number | null;
-}
+import type { SessionDetail, SessionInfo } from './types.js';
 
 /** The hint line Claude Code prints under the status line. */
 const HINT = /⏵⏵|shift\+tab to cycle/;
@@ -185,7 +171,7 @@ function fromRecords(records: readonly Record<string, unknown>[]): Partial<Sessi
   return out;
 }
 
-export async function sessionDetail(
+export async function claudeDetail(
   exec: Executor,
   session: SessionInfo,
 ): Promise<SessionDetail> {
@@ -233,5 +219,9 @@ export async function sessionDetail(
     startedAt: counts.firstTs,
     transcriptBytes: counts.bytes,
     uptimeSeconds,
+    // Claude Code does not publish its context window in the transcript, and the
+    // status line above already carries the percentage it computes itself.
+    contextWindow: null,
+    extra: [],
   };
 }

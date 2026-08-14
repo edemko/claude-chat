@@ -16,11 +16,11 @@ import {
 import { BrowseError, listDir, makeDir } from './browse.js';
 import { listCommands } from './commands.js';
 import { HOST, PORT, REPO_ROOTS, getToken, loadServers } from './config.js';
-import { createSession, listRepoDirs } from './create.js';
-import { bindPane, listPaneCandidates, listSessions } from './discovery.js';
+import { listRepoDirs } from './create.js';
+import { bindPane, countByProvider, listPaneCandidates, listSessions } from './discovery.js';
 import { LocalExecutor, SshExecutor, type Executor } from './exec.js';
-import { sessionDetail } from './info.js';
 import { PaneNotClaudeError, capturePane, sendKey, sendText } from './input.js';
+import { availableProviders, isProviderId, providerFor } from './providers/index.js';
 import { probe } from './proc.js';
 import { StreamHub } from './stream.js';
 import { historyPage } from './transcript.js';
@@ -282,7 +282,7 @@ async function handleApi(
       sessions.list(serverId, fresh ? 0 : 4_000),
       homeOf(serverId),
     ]);
-    return sendJson(res, 200, { sessions: list, home });
+    return sendJson(res, 200, { sessions: list, home, counts: countByProvider(list) });
   }
 
   /*
@@ -295,24 +295,50 @@ async function handleApi(
   if (parts[3] === 'commands' && method === 'GET') {
     const cwd = url.searchParams.get('cwd');
     if (cwd !== null && !cwd.startsWith('/')) throw new HttpError(400, 'cwd must be absolute');
-    return sendJson(res, 200, await listCommands(exec, await homeOf(serverId), cwd));
+    const which = url.searchParams.get('provider') ?? 'claude';
+    if (!isProviderId(which)) throw new HttpError(400, `unknown provider: ${which}`);
+    return sendJson(res, 200, {
+      ...(await providerFor(which).commands(exec, await homeOf(serverId), cwd)),
+      provider: which,
+    });
   }
 
   // POST /api/servers/:id/sessions  {dir, skipPermissions}
   if (parts[3] === 'sessions' && parts.length === 4 && method === 'POST') {
-    const body = (await readBody(req)) as { dir?: unknown; skipPermissions?: unknown };
+    const body = (await readBody(req)) as {
+      dir?: unknown;
+      skipPermissions?: unknown;
+      provider?: unknown;
+    };
     if (typeof body.dir !== 'string' || !body.dir.startsWith('/')) {
       throw new HttpError(400, 'dir must be an absolute path');
     }
-    const created = await createSession(exec, serverId, body.dir, body.skipPermissions === true);
+    const wanted = typeof body.provider === 'string' ? body.provider : 'claude';
+    if (!isProviderId(wanted)) throw new HttpError(400, `unknown provider: ${wanted}`);
+    const { home } = await probe(exec);
+    if (!(await availableProviders(exec, home)).includes(wanted)) {
+      throw new HttpError(409, `${wanted} is not installed on ${serverId}`);
+    }
+    const created = await providerFor(wanted).create(
+      exec,
+      serverId,
+      body.dir,
+      body.skipPermissions === true,
+    );
     sessions.invalidate(serverId);
-    return sendJson(res, 201, created);
+    return sendJson(res, 201, { ...created, provider: wanted });
   }
 
   // GET /api/servers/:id/dirs — git repos under CC_REPO_ROOTS, the quick list
   if (parts[3] === 'dirs' && method === 'GET') {
     const { home } = await probe(exec);
-    return sendJson(res, 200, { dirs: await listRepoDirs(exec, home), roots: REPO_ROOTS, home });
+    const [dirs, providers] = await Promise.all([
+      listRepoDirs(exec, home),
+      // Which agents this machine actually has. The client offers only these, so a
+      // machine without Codex never presents an option that cannot work.
+      availableProviders(exec, home),
+    ]);
+    return sendJson(res, 200, { dirs, roots: REPO_ROOTS, home, providers });
   }
 
   /*
@@ -391,7 +417,12 @@ async function handleApi(
     if (!session.transcript) {
       return sendJson(res, 200, { session, events: [], cursor: 0, hasMore: false });
     }
-    const page = await historyPage(exec, session.transcript, { before, limit });
+    const page = await historyPage(
+      exec,
+      session.transcript,
+      providerFor(session.provider).toEvents,
+      { before, limit },
+    );
     return sendJson(res, 200, { session, ...page });
   }
 
@@ -434,14 +465,15 @@ async function handleApi(
     const body = (await readBody(req)) as { key?: unknown };
     if (typeof body.key !== 'string') throw new HttpError(400, 'key is required');
     const session = await sessions.get(serverId, uuid);
-    await sendKey(exec, session.paneId, body.key);
+    await sendKey(exec, session.paneId, body.key, providerFor(session.provider).clearKey);
     return sendJson(res, 200, { ok: true });
   }
 
   // GET .../sessions/:uuid/info — status line and session facts for the "i" sheet
   if (action === 'info' && method === 'GET') {
     const session = await sessions.get(serverId, uuid);
-    return sendJson(res, 200, { session, ...(await sessionDetail(exec, session)) });
+    const detail = await providerFor(session.provider).detail(exec, session);
+    return sendJson(res, 200, { session, ...detail });
   }
 
   // GET .../sessions/:uuid/peek — raw screen, to sanity-check a weak mapping
@@ -592,6 +624,7 @@ function attachSocket(ws: WebSocket, url: URL): void {
           execFor(serverId),
           serverId,
           session.transcript,
+          providerFor(session.provider).toEvents,
           (events) => send({ type: 'events', sessionUuid, events }),
         );
       })
@@ -603,7 +636,9 @@ function attachSocket(ws: WebSocket, url: URL): void {
   // Keep the chat list live even when a single session is being watched.
   const pushSessions = () => {
     void Promise.all([sessions.list(serverId, 4_000), homeOf(serverId)])
-      .then(([list, home]) => send({ type: 'sessions', sessions: list, home }))
+      .then(([list, home]) =>
+        send({ type: 'sessions', sessions: list, home, counts: countByProvider(list) }),
+      )
       .catch((err: unknown) => console.error('[ws] session list failed:', err));
   };
   pushSessions();

@@ -9,6 +9,7 @@ const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 /** Keys the client may send, mapped to tmux key names. Whitelisted, never passed through. */
 const KEY_MAP: Record<string, string> = {
   escape: 'Escape',
+  'ctrl-u': 'C-u',
   'ctrl-c': 'C-c',
   'ctrl-d': 'C-d',
   'ctrl-l': 'C-l',
@@ -25,7 +26,7 @@ const KEY_MAP: Record<string, string> = {
 export class PaneNotClaudeError extends Error {
   constructor(readonly paneId: string, readonly command: string) {
     super(
-      `pane ${paneId} is running "${command}", not claude — refusing to send. ` +
+      `pane ${paneId} is running "${command}", not an agent — refusing to send. ` +
         `The session likely exited; text would be executed as a shell command.`,
     );
     this.name = 'PaneNotClaudeError';
@@ -33,22 +34,30 @@ export class PaneNotClaudeError extends Error {
 }
 
 /**
- * Refuse to type into a pane whose Claude session has exited. Otherwise the message
- * would land in a shell prompt and run as a command — on a box running live services.
+ * Process names a pane may be running for a send to be safe.
+ *
+ * Depending on how it was launched Claude Code reports as `claude` or as `node`, and
+ * Codex as `codex`. The check is deliberately permissive across agents but never
+ * accepts a shell: the whole point is refusing to type a message at a shell prompt,
+ * where it would run as a command on a box hosting live services.
  */
-async function assertClaudePane(exec: Executor, paneId: string): Promise<void> {
+const AGENT_COMMS = new Set(['claude', 'node', 'codex']);
+
+/**
+ * Refuse to type into a pane whose agent has exited.
+ */
+async function assertAgentPane(exec: Executor, paneId: string): Promise<void> {
   const { stdout, code } = await exec.run([
     'tmux', 'display-message', '-p', '-t', paneId, '#{pane_current_command}',
   ]);
   if (code !== 0) throw new Error(`pane ${paneId} no longer exists`);
   const cmd = stdout.trim();
-  // Depending on how it was launched, claude may report as `claude` or `node`.
-  if (cmd !== 'claude' && cmd !== 'node') throw new PaneNotClaudeError(paneId, cmd);
+  if (!AGENT_COMMS.has(cmd)) throw new PaneNotClaudeError(paneId, cmd);
 }
 
 export async function sendText(exec: Executor, paneId: string, text: string): Promise<void> {
   if (!text) return;
-  await assertClaudePane(exec, paneId);
+  await assertAgentPane(exec, paneId);
 
   const needsPaste = text.includes('\n') || text.includes('\\');
   if (needsPaste) {
@@ -64,10 +73,22 @@ export async function sendText(exec: Executor, paneId: string, text: string): Pr
   await exec.run(['tmux', 'send-keys', '-t', paneId, 'Enter']);
 }
 
-export async function sendKey(exec: Executor, paneId: string, key: string): Promise<void> {
-  const tmuxKey = KEY_MAP[key.toLowerCase()];
+/**
+ * `clear` is resolved by the caller to the provider's own key.
+ *
+ * Escape clears Claude Code's composer; in Codex it leaves the text alone, so a
+ * stale line silently prefixes whatever is sent next. One logical key, two bindings.
+ */
+export async function sendKey(
+  exec: Executor,
+  paneId: string,
+  key: string,
+  clearKey?: string,
+): Promise<void> {
+  const lower = key.toLowerCase();
+  const tmuxKey = lower === 'clear' ? clearKey : KEY_MAP[lower];
   if (!tmuxKey) throw new Error(`unsupported key: ${key}`);
-  await assertClaudePane(exec, paneId);
+  await assertAgentPane(exec, paneId);
   await exec.run(['tmux', 'send-keys', '-t', paneId, tmuxKey]);
 }
 
