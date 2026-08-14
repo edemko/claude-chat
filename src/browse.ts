@@ -17,7 +17,10 @@ import { q } from './shell.js';
 export interface DirEntry {
   name: string;
   path: string;
-  /** Holds a `.git`, so it is a repo you would actually start a session in. */
+  /**
+   * Holds a `.git`, so it is a repo you would actually start a session in. Tested
+   * with `-e`, not `-d`: in a worktree or submodule `.git` is a file.
+   */
   isRepo: boolean;
 }
 
@@ -80,12 +83,12 @@ export async function listDir(
     `real=$(realpath ${q(path)} 2>/dev/null) || { echo "###ERR"; exit 0; }`,
     `[ -d "$real" ] || { echo "###ERR"; exit 0; }`,
     `echo "###PATH"; echo "$real"`,
-    `echo "###SELF"; [ -d "$real/.git" ] && echo 1 || echo 0`,
+    `echo "###SELF"; [ -e "$real/.git" ] && echo 1 || echo 0`,
     `echo "###ENTRIES"`,
     // -maxdepth/-mindepth 1 keeps it to direct children; the .git test is done here
     // so the client gets one answer rather than N follow-up requests.
     `find "$real" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | while IFS= read -r d; do`,
-    `  [ -d "$d/.git" ] && r=1 || r=0`,
+    `  [ -e "$d/.git" ] && r=1 || r=0`,
     `  printf '%s\\t%s\\n' "$r" "$d"`,
     `done`,
   ].join('\n');

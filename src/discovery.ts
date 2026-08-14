@@ -49,6 +49,28 @@ interface Entry {
 }
 
 /**
+ * Which of these directories are git repos, in one round trip.
+ *
+ * `-e` rather than `-d`: inside a worktree or a submodule, `.git` is a file pointing
+ * at the real directory, and testing for a directory would call those plain folders.
+ */
+async function repoDirs(exec: Executor, dirs: readonly string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (dirs.length === 0) return out;
+  const script = `${dirs.map((d) => `[ -e ${q(d)}/.git ] && printf '%s\\n' ${q(d)}`).join('\n')}\ntrue`;
+  try {
+    const { stdout } = await exec.runShell(script, { timeoutMs: 10_000 });
+    for (const line of stdout.split('\n')) {
+      if (line.trim()) out.add(line.trim());
+    }
+  } catch (err) {
+    // Not knowing costs a colour in the list, nothing more.
+    console.error('[discovery] repo test failed:', err);
+  }
+  return out;
+}
+
+/**
  * Does this transcript's recent text appear on the pane's screen?
  *
  * Compared with all non-alphanumerics stripped, because the TUI hard-wraps lines
@@ -277,6 +299,8 @@ export async function listSessions(exec: Executor, serverId: string): Promise<Se
     else byCwd.set(entry.proc.cwd, [entry]);
   }
 
+  const repos = await repoDirs(exec, [...byCwd.keys()]);
+
   const resolutions = new Map<string, Resolution>();
   for (const group of byCwd.values()) {
     try {
@@ -326,6 +350,7 @@ export async function listSessions(exec: Executor, serverId: string): Promise<Se
       tmuxSession: entry.pane.tmuxSession,
       pid: entry.proc.pid,
       cwd: entry.proc.cwd,
+      isRepo: repos.has(entry.proc.cwd),
       title,
       status: age < WORKING_WINDOW_MS ? 'working' : 'idle',
       confidence: res?.confidence ?? 'pending',

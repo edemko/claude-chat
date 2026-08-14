@@ -59,6 +59,15 @@
 
 <!-- Chat -->
 <section id="screen-chat" class="screen">
+  <!-- Shown instead of the chat on a wide screen, where the sidebar is always up and
+       something has to occupy the other half before a session is picked. -->
+  <div id="chat-empty" class="chat-empty">
+    <div>
+      <strong>Pick a session</strong>
+      <span>Your projects are on the left. ＋ starts a new session in any folder.</span>
+    </div>
+  </div>
+
   <header class="topbar">
     <button id="btn-back" class="iconbtn" aria-label="Back to sessions">‹</button>
     <div class="topbar-titles">
@@ -69,10 +78,19 @@
     <span id="chat-bead" class="bead"></span>
   </header>
   <div id="chat-notice"></div>
-  <div id="thread-scroll" class="scroll">
-    <div id="thread" class="thread"></div>
+  <div class="thread-wrap">
+    <div id="thread-scroll" class="scroll">
+      <div id="thread" class="thread"></div>
+    </div>
+    <!-- Only while scrolled up. Reading back through a long session and then having to
+         swipe all the way down again is the whole reason this exists. -->
+    <button id="btn-bottom" class="to-bottom" hidden aria-label="Jump to the latest message">↓</button>
   </div>
   <div class="composer">
+    <!-- Command menu and hint sit above the keys, in normal flow: a floating panel
+         would end up under the on-screen keyboard on half the phones that matter. -->
+    <div id="cmd-pop" class="cmd-pop" hidden role="listbox" aria-label="Slash commands"></div>
+    <div id="cmd-hint" class="cmd-hint" hidden></div>
     <div class="keybar">
       <button class="key" data-key="escape">esc</button>
       <button class="key" data-key="ctrl-c">^C</button>
@@ -85,8 +103,13 @@
       <button class="key" id="btn-pick">conversation</button>
     </div>
     <div class="compose-row">
-      <textarea id="compose" rows="1" placeholder="Message this session…"
-                autocapitalize="sentences" autocorrect="on" spellcheck="true"></textarea>
+      <!-- The field carries the border and background so the highlight layer can sit
+           behind the text without a second box around it. -->
+      <div id="compose-field" class="compose-field">
+        <div id="compose-mirror" class="compose-mirror" aria-hidden="true"></div>
+        <textarea id="compose" rows="1" placeholder="Message this session…"
+                  autocapitalize="sentences" autocorrect="on" spellcheck="true"></textarea>
+      </div>
       <!-- Screenshot. On Android this opens the system picker, which offers recent
            screenshots first, so it is two taps from taking one to sending it. -->
       <input id="pick-image" type="file" accept="image/png,image/jpeg,image/webp" hidden>
@@ -158,6 +181,7 @@
     </div>
     <div id="conn-list" class="scroll"></div>
     <div class="drawer-foot">
+      <button id="btn-help" type="button" class="ghost">Help &amp; commands</button>
       <button id="btn-add-server" type="button">Add a server</button>
     </div>
   </div>
@@ -194,6 +218,23 @@
       <button id="btn-account-close" class="iconbtn" aria-label="Close">✕</button>
     </div>
     <div id="account-body"></div>
+  </div>
+</div>
+
+<!-- Help -->
+<div id="help-sheet" class="sheet">
+  <div class="sheet-panel is-tall">
+    <div class="sheet-head">
+      <h2>Help</h2>
+      <button id="btn-help-close" class="iconbtn" aria-label="Close">✕</button>
+    </div>
+    <div class="help-tabs">
+      <button class="help-tab is-on" type="button" data-tab="tips">Tips</button>
+      <button class="help-tab" type="button" data-tab="commands">Commands</button>
+    </div>
+    <input id="help-filter" class="help-filter" type="text" placeholder="Filter commands…"
+           autocapitalize="none" autocorrect="off" spellcheck="false" hidden>
+    <div id="help-body" class="scroll"></div>
   </div>
 </div>
 

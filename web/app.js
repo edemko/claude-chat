@@ -1,3 +1,11 @@
+import {
+  HELP_SECTIONS,
+  SOURCE_LABEL,
+  filterCommands,
+  leadingCommand,
+  parseSlash,
+  rankCommands,
+} from './commands.js';
 import { renderMarkdown } from './markdown.js';
 
 const $ = (id) => document.getElementById(id);
@@ -8,6 +16,8 @@ const state = {
   serverId: null,
   sessions: [],
   session: null,
+  /** Remote home directory, for showing `~/Dev/x` rather than `/home/you/Dev/x`. */
+  home: null,
   /** id -> element, so live batches append instead of re-rendering the thread. */
   nodes: new Map(),
   /** tool_use_id -> {ok, preview}; results can arrive before or after their chip. */
@@ -197,6 +207,25 @@ function fmtWhen(ts) {
 
 const repoOf = (cwd) => cwd.split('/').filter(Boolean).pop() ?? cwd;
 
+/** `/home/you/Dev/x` -> `~/Dev/x`, once the hub has told us where home is. */
+function tildify(path) {
+  const home = state.home;
+  if (home && (path === home || path.startsWith(`${home}/`))) return `~${path.slice(home.length)}`;
+  return path;
+}
+
+/**
+ * A path short enough for a sidebar row.
+ *
+ * Truncated from the front, keeping the last few segments: CSS can only ellipsise the
+ * tail, which is the half that tells you which project this is.
+ */
+function shortPath(path) {
+  const shown = tildify(path);
+  const parts = shown.split('/');
+  return parts.length <= 4 ? shown : `…/${parts.slice(-3).join('/')}`;
+}
+
 /**
  * Build an element. Nodes are constructed, never assembled as HTML strings.
  *
@@ -227,6 +256,14 @@ function show(which) {
   for (const name of ['login', 'list', 'chat']) {
     $(`screen-${name}`).classList.toggle('is-active', which === name);
   }
+  // On a wide screen the list and the chat sit side by side. Sign-in owns the whole
+  // window, so the split only starts once there is something to be beside.
+  document.body.classList.toggle('is-split', which !== 'login');
+}
+
+/** The chat half has nothing to show until a session is picked. */
+function markSession() {
+  document.body.classList.toggle('no-session', !state.session);
 }
 
 /* ---------- sign in ---------- */
@@ -240,6 +277,7 @@ function forgetActive() {
   closeWs();
   state.session = null;
   state.sessions = [];
+  markSession();
 }
 
 async function doLogin(event) {
@@ -446,6 +484,7 @@ async function selectConn(id) {
     state.session = null;
     state.sessions = [];
     state.serverId = null;
+    markSession();
     renderSessions();
   }
   closeDrawer();
@@ -463,6 +502,7 @@ async function removeConn(id) {
     state.session = null;
     state.sessions = [];
     state.serverId = null;
+    markSession();
   }
   renderConnections();
   toast(`Removed ${conn.label ?? conn.host}`);
@@ -555,8 +595,9 @@ async function routeStart() {
 /* ---------- session list ---------- */
 
 function sessionRow(session) {
+  const current = state.session?.paneId === session.paneId;
   const btn = document.createElement('button');
-  btn.className = 'session';
+  btn.className = `session${current ? ' is-current' : ''}`;
   btn.type = 'button';
 
   const bead = document.createElement('span');
@@ -565,15 +606,12 @@ function sessionRow(session) {
   const body = document.createElement('div');
   body.className = 'session-body';
 
-  // Repo first, in the accent colour. Session names repeat across projects — two
-  // panes were once both called "implementing MEGA bucket" — so the project is what
-  // identifies a row and it does not belong in the small print.
+  // The project is now the group heading above this row, so the title is just the
+  // conversation. Names repeat across projects — two panes were once both called
+  // "implementing MEGA bucket" — and the heading is what tells them apart.
   const title = document.createElement('div');
   title.className = 'session-title';
-  const repo = document.createElement('span');
-  repo.className = 'session-repo';
-  repo.textContent = repoOf(session.cwd);
-  title.append(repo, document.createTextNode(`  ${session.title}`));
+  title.textContent = session.title;
 
   const meta = document.createElement('div');
   meta.className = 'session-meta meta';
@@ -599,6 +637,46 @@ function sessionRow(session) {
   return btn;
 }
 
+/**
+ * Sessions by the directory they run in.
+ *
+ * Work here is organised by project, not by conversation: several sessions in one
+ * repo is normal, and the same conversation name in two repos is a different thing
+ * entirely. Groups are ordered by their most recent activity, so whatever is live
+ * stays at the top.
+ */
+function groupSessions(sessions) {
+  const groups = new Map();
+  for (const session of sessions) {
+    let group = groups.get(session.cwd);
+    if (!group) {
+      group = {
+        cwd: session.cwd,
+        name: repoOf(session.cwd),
+        isRepo: session.isRepo === true,
+        sessions: [],
+        last: 0,
+      };
+      groups.set(session.cwd, group);
+    }
+    group.sessions.push(session);
+    group.last = Math.max(group.last, session.lastActivity ?? 0);
+  }
+  return [...groups.values()].sort((a, b) => b.last - a.last);
+}
+
+function projectGroup(group) {
+  const head = mk('div', 'proj-head', [
+    mk('span', 'proj-name', [group.name]),
+    mk('span', 'proj-badge', [group.isRepo ? 'repo' : 'folder']),
+    mk('span', 'proj-path meta', [shortPath(group.cwd)]),
+  ]);
+  return mk('div', `proj${group.isRepo ? ' is-repo' : ''}`, [
+    head,
+    ...group.sessions.map(sessionRow),
+  ]);
+}
+
 function renderSessions() {
   const list = $('session-list');
   if (state.sessions.length === 0) {
@@ -607,7 +685,7 @@ function renderSessions() {
       'Tap ＋ to start Claude in one of your repos.</div>';
     return;
   }
-  list.replaceChildren(...state.sessions.map(sessionRow));
+  list.replaceChildren(...groupSessions(state.sessions).map(projectGroup));
 }
 
 async function refreshSessions(fresh = false) {
@@ -617,6 +695,7 @@ async function refreshSessions(fresh = false) {
       `/api/servers/${state.serverId}/sessions${fresh ? '?fresh=1' : ''}`,
     );
     state.sessions = data.sessions;
+    if (data.home) state.home = data.home;
     renderSessions();
     syncOpenSession();
   } catch (err) {
@@ -753,7 +832,31 @@ function addEvents(events, { prepend = false } = {}) {
   }
 
   if (nearBottom) scroller.scrollTop = scroller.scrollHeight;
+  // Something arrived while reading back through the thread. Never yank the view
+  // down — mark the button instead and let the reader decide.
+  else if (events.length > 0) $('btn-bottom').classList.add('has-new');
+  updateBottomButton();
 }
+
+/* ---------- jump to the latest message ---------- */
+
+/** Far enough up that scrolling back by hand is a chore. */
+const DETACHED_PX = 160;
+
+function updateBottomButton() {
+  const scroller = $('thread-scroll');
+  const gap = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+  const away = gap > DETACHED_PX;
+  const btn = $('btn-bottom');
+  btn.hidden = !away;
+  if (!away) btn.classList.remove('has-new');
+}
+
+$('btn-bottom').addEventListener('click', () => {
+  const scroller = $('thread-scroll');
+  scroller.scrollTo({ top: scroller.scrollHeight, behavior: 'smooth' });
+  $('btn-bottom').classList.remove('has-new');
+});
 
 /** Fetch the page preceding what is loaded, triggered by scrolling near the top. */
 async function loadOlder() {
@@ -789,6 +892,7 @@ async function loadOlder() {
 
 $('thread-scroll').addEventListener('scroll', () => {
   if ($('thread-scroll').scrollTop < 240) void loadOlder();
+  updateBottomButton();
 }, { passive: true });
 
 function setNotice(text, bad = false) {
@@ -847,6 +951,12 @@ async function openChat(session) {
   if (session.confidence === 'weak') showGuessNotice();
   else setNotice('');
   show('chat');
+  markSession();
+  // Highlight the row this came from, which on a wide screen stays on screen.
+  renderSessions();
+  // This project's own commands, for the composer. Fire and forget: autocomplete
+  // arriving a moment late is fine, blocking the thread on it is not.
+  void loadCommands(session);
 
   try {
     const data = await api(
@@ -857,6 +967,8 @@ async function openChat(session) {
     addEvents(data.events);
     // Open at the newest message, the way a chat app should.
     $('thread-scroll').scrollTop = $('thread-scroll').scrollHeight;
+    $('btn-bottom').classList.remove('has-new');
+    updateBottomButton();
   } catch (err) {
     toast(err.message, true);
   }
@@ -895,6 +1007,7 @@ function connectWs(session) {
       if (state.session && msg.sessionUuid === state.session.uuid) addEvents(msg.events);
     } else if (msg.type === 'sessions') {
       state.sessions = msg.sessions;
+      if (msg.home) state.home = msg.home;
       renderSessions();
       syncOpenSession();
     } else if (msg.type === 'error') {
@@ -919,7 +1032,23 @@ function autogrow() {
   $('btn-send').disabled = compose.value.trim().length === 0;
 }
 
-compose.addEventListener('input', autogrow);
+compose.addEventListener('input', () => {
+  autogrow();
+  updateComposer();
+});
+// A tap or an arrow key moves the caret without changing the text, and the menu
+// belongs to where the caret is.
+compose.addEventListener('click', updateComposer);
+compose.addEventListener('keyup', (e) => {
+  if (e.key === 'ArrowUp' || e.key === 'ArrowDown') return; // owned by the menu
+  updateComposer();
+});
+// Deferred: tapping a suggestion blurs the box first on a touchscreen, and hiding the
+// menu on that blur would pull the row out from under the finger before it lands.
+compose.addEventListener('blur', () => setTimeout(closeCmdMenu, 150));
+compose.addEventListener('scroll', () => {
+  $('compose-mirror').scrollTop = compose.scrollTop;
+}, { passive: true });
 
 async function sendMessage() {
   const text = compose.value;
@@ -933,6 +1062,7 @@ async function sendMessage() {
     );
     compose.value = '';
     autogrow();
+    updateComposer();
   } catch (err) {
     if (err.code === 'pane-not-claude') {
       setNotice(
@@ -946,6 +1076,247 @@ async function sendMessage() {
 }
 
 $('btn-send').addEventListener('click', sendMessage);
+
+/* ---------- slash commands ---------- */
+
+/*
+ * What the session will accept as a command: Claude Code's built-ins, plus whatever
+ * this machine and this project define in `.claude/commands` and `.claude/skills`.
+ * The custom half is the reason this is fetched rather than hardcoded — a list of
+ * built-ins is guessable, your own commands are not.
+ */
+const cmd = {
+  list: [],
+  /** Directory the list belongs to; a different project has different commands. */
+  forCwd: null,
+  matches: [],
+  index: 0,
+  open: false,
+  /** Text the menu was dismissed for, so it stays shut until something is typed. */
+  suppressed: null,
+};
+
+async function loadCommands(session) {
+  if (!session || cmd.forCwd === session.cwd) return;
+  cmd.forCwd = session.cwd;
+  cmd.list = [];
+  try {
+    const data = await api(
+      `/api/servers/${session.serverId}/commands?cwd=${encodeURIComponent(session.cwd)}`,
+    );
+    // A reply for a session we have since left must not become this one's catalogue.
+    if (state.session?.cwd === session.cwd) {
+      cmd.list = data.commands;
+      updateComposer();
+    }
+  } catch {
+    // Autocomplete is a convenience. Clear the marker so the next open retries.
+    cmd.forCwd = null;
+  }
+}
+
+/** The catalogue for the help sheet, which may be open with no session in view. */
+async function commandsForHelp() {
+  if (cmd.list.length > 0) return cmd.list;
+  if (!state.serverId) return [];
+  const cwd = state.session?.cwd;
+  const data = await api(
+    `/api/servers/${state.serverId}/commands${cwd ? `?cwd=${encodeURIComponent(cwd)}` : ''}`,
+  );
+  return data.commands;
+}
+
+/**
+ * Is this name going to be understood?
+ *
+ * A prefix of a real command counts as fine while the name is still being typed —
+ * warning about `/comp` on the way to `/compact` would be nagging. Once arguments
+ * follow, the name is settled and only an exact match will do. With no catalogue
+ * loaded nothing is flagged: a false warning is worse than no warning.
+ */
+function commandKnown(name, settled) {
+  if (cmd.list.length === 0) return true;
+  if (cmd.list.some((c) => c.name === name)) return true;
+  return !settled && cmd.list.some((c) => c.name.startsWith(name));
+}
+
+/** Where the leading `/name` token ends. */
+function nameEnd(text) {
+  const space = text.search(/\s/);
+  return space < 0 ? text.length : space;
+}
+
+/** Paint the command name behind the textarea's own (transparent) text. */
+function renderMirror(text) {
+  const field = $('compose-field');
+  const mirror = $('compose-mirror');
+  const on = text.startsWith('/');
+  field.classList.toggle('is-cmd', on);
+  if (!on) {
+    mirror.replaceChildren();
+    return;
+  }
+  const end = nameEnd(text);
+  const known = commandKnown(text.slice(1, end), end < text.length);
+  mirror.replaceChildren(
+    mk('span', `cmd-tok ${known ? 'is-known' : 'is-unknown'}`, [text.slice(0, end)]),
+    document.createTextNode(text.slice(end)),
+  );
+  mirror.scrollTop = compose.scrollTop;
+}
+
+function renderCmdMenu() {
+  const pop = $('cmd-pop');
+  pop.replaceChildren(
+    ...cmd.matches.map((c, i) => {
+      const row = mk('button', `cmd-row${i === cmd.index ? ' is-on' : ''}`, [
+        mk('span', 'cmd-row-name', [`/${c.name}`]),
+        ...(c.argumentHint ? [mk('span', 'cmd-row-hint', [c.argumentHint])] : []),
+        mk('span', 'cmd-row-desc', [c.description]),
+        ...(c.source !== 'builtin' ? [mk('span', 'cmd-tag', [SOURCE_LABEL[c.source]])] : []),
+      ]);
+      row.type = 'button';
+      // mousedown, not click: click lands after the textarea has already blurred,
+      // which closes the menu out from under the tap.
+      row.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        applyCompletion(c);
+      });
+      return row;
+    }),
+  );
+  pop.hidden = false;
+}
+
+function closeCmdMenu() {
+  cmd.open = false;
+  cmd.matches = [];
+  $('cmd-pop').hidden = true;
+}
+
+function dismissCmdMenu() {
+  cmd.suppressed = compose.value;
+  closeCmdMenu();
+  renderCmdHint(compose.value);
+}
+
+function moveCmdSelection(step) {
+  if (cmd.matches.length === 0) return;
+  cmd.index = (cmd.index + step + cmd.matches.length) % cmd.matches.length;
+  renderCmdMenu();
+  $('cmd-pop').children[cmd.index]?.scrollIntoView({ block: 'nearest' });
+}
+
+/** Replace the leading token with a chosen command, leaving room for its arguments. */
+function applyCompletion(chosen) {
+  const text = compose.value;
+  const rest = text.slice(nameEnd(text));
+  const tail = chosen.argumentHint && !rest.trim() ? ' ' : rest;
+  compose.value = `/${chosen.name}${tail}`;
+  const caret = chosen.name.length + 1 + (tail === ' ' ? 1 : 0);
+  compose.setSelectionRange(caret, caret);
+  compose.focus();
+  autogrow();
+  // Dismissed for this exact text: completing a name would otherwise reopen the menu
+  // on the very command just picked.
+  cmd.suppressed = compose.value;
+  closeCmdMenu();
+  renderMirror(compose.value);
+  renderCmdHint(compose.value);
+}
+
+/** One line saying what the command about to be sent actually does. */
+function renderCmdHint(text) {
+  const hint = $('cmd-hint');
+  const name = leadingCommand(text);
+  // While the menu is open it says the same thing, with more detail.
+  if (!name || cmd.open || cmd.list.length === 0) {
+    hint.hidden = true;
+    return;
+  }
+  const found = cmd.list.find((c) => c.name === name);
+  const settled = /\s/.test(text);
+
+  if (!found) {
+    if (!settled) {
+      hint.hidden = true;
+      return;
+    }
+    hint.className = 'cmd-hint is-unknown';
+    hint.replaceChildren(
+      mk('span', 'name', [`/${name}`]),
+      mk('span', 'what', ['not a command this session knows — it will be sent as text']),
+    );
+    hint.hidden = false;
+    return;
+  }
+
+  hint.className = 'cmd-hint';
+  hint.replaceChildren(
+    mk('span', 'name', [`/${found.name}${found.argumentHint ? ` ${found.argumentHint}` : ''}`]),
+    mk('span', 'what', [found.description]),
+  );
+  hint.hidden = false;
+}
+
+/** Recompute everything that depends on the text and the caret. */
+function updateComposer() {
+  const text = compose.value;
+  const caret = compose.selectionStart ?? text.length;
+  renderMirror(text);
+
+  const slash = parseSlash(text, caret);
+  if (!slash || cmd.suppressed === text || cmd.list.length === 0) {
+    closeCmdMenu();
+  } else {
+    const matches = rankCommands(slash.query, cmd.list).slice(0, 40);
+    if (matches.length === 0) {
+      closeCmdMenu();
+    } else {
+      cmd.matches = matches;
+      cmd.index = 0;
+      cmd.open = true;
+      cmd.suppressed = null;
+      renderCmdMenu();
+    }
+  }
+  renderCmdHint(text);
+}
+
+/** A physical keyboard is a desktop keyboard: Enter sends, Shift-Enter breaks a line. */
+const wideScreen = () => window.matchMedia('(min-width: 900px)').matches;
+
+compose.addEventListener('keydown', (e) => {
+  if (cmd.open) {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      moveCmdSelection(1);
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      moveCmdSelection(-1);
+      return;
+    }
+    if (e.key === 'Tab' || e.key === 'Enter') {
+      const chosen = cmd.matches[cmd.index];
+      if (chosen) {
+        e.preventDefault();
+        applyCompletion(chosen);
+        return;
+      }
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      dismissCmdMenu();
+      return;
+    }
+  }
+  if (e.key === 'Enter' && !e.shiftKey && wideScreen()) {
+    e.preventDefault();
+    void sendMessage();
+  }
+});
 
 /* ---------- copy ---------- */
 
@@ -1491,9 +1862,125 @@ $('sheet').addEventListener('click', (e) => {
 $('btn-back').addEventListener('click', () => {
   closeWs();
   state.session = null;
+  markSession();
   show('list');
   refreshSessions();
 });
+
+/* ---------- help ---------- */
+
+let helpTab = 'tips';
+
+function helpItem(term, text, mono = false) {
+  return mk('div', 'help-item', [
+    mk('div', `help-term${mono ? ' mono' : ''}`, [term]),
+    mk('div', 'help-text', [text]),
+  ]);
+}
+
+function renderHelpTips() {
+  const body = $('help-body');
+  const parts = [];
+  for (const section of HELP_SECTIONS) {
+    parts.push(
+      mk('div', 'help-sec', [
+        mk('h3', '', [section.title]),
+        ...section.items.map(([term, text]) =>
+          helpItem(term, text, section.title === 'The key bar'),
+        ),
+      ]),
+    );
+  }
+  // Enter only sends where there is a keyboard to press it on, so say so there.
+  if (wideScreen()) {
+    parts.push(
+      mk('div', 'help-sec', [
+        mk('h3', '', ['On this screen']),
+        helpItem('Enter sends', 'Shift-Enter starts a new line. On a phone the ↑ button sends.'),
+        helpItem(
+          'The list stays open',
+          'Sessions on the left, conversation on the right — no going back and forth.',
+        ),
+      ]),
+    );
+  }
+  body.replaceChildren(...parts);
+}
+
+function commandGroup(title, commands, note) {
+  if (commands.length === 0) return null;
+  return mk('div', 'help-sec', [
+    mk('h3', '', [`${title} · ${commands.length}`]),
+    ...(note ? [mk('div', 'help-foot', [note])] : []),
+    ...commands.map((c) =>
+      helpItem(`/${c.name}${c.argumentHint ? ` ${c.argumentHint}` : ''}`, c.description, true),
+    ),
+  ]);
+}
+
+async function renderHelpCommands(filter = '') {
+  const body = $('help-body');
+  let list;
+  try {
+    list = await commandsForHelp();
+  } catch {
+    body.replaceChildren(mk('div', 'empty', ['Could not read the commands from this server.']));
+    return;
+  }
+
+  const shown = filterCommands(filter, list);
+  if (shown.length === 0) {
+    body.replaceChildren(mk('div', 'empty', ['Nothing matches that.']));
+    return;
+  }
+
+  const by = (source) => shown.filter((c) => c.source === source);
+  const groups = [
+    commandGroup('This project', by('project')),
+    commandGroup('Your commands', by('user')),
+    commandGroup('Skills', by('skill')),
+    commandGroup('Built in', by('builtin')),
+  ].filter(Boolean);
+
+  groups.push(
+    mk('div', 'help-foot', [
+      'Add your own by dropping a markdown file in ',
+      mk('code', '', ['~/.claude/commands']),
+      ' or ',
+      mk('code', '', ['.claude/commands']),
+      ' in the project. The filename is the command name, and a ',
+      mk('code', '', ['description:']),
+      ' line in its frontmatter is what shows up here.',
+    ]),
+  );
+  body.replaceChildren(...groups);
+}
+
+function setHelpTab(tab) {
+  helpTab = tab;
+  for (const btn of document.querySelectorAll('.help-tab')) {
+    btn.classList.toggle('is-on', btn.dataset.tab === tab);
+  }
+  $('help-filter').hidden = tab !== 'commands';
+  if (tab === 'tips') renderHelpTips();
+  else void renderHelpCommands($('help-filter').value);
+}
+
+function openHelp() {
+  closeDrawer();
+  $('help-sheet').classList.add('is-open');
+  setHelpTab(helpTab);
+}
+
+$('btn-help').addEventListener('click', openHelp);
+$('btn-help-close').addEventListener('click', () => $('help-sheet').classList.remove('is-open'));
+$('help-sheet').addEventListener('click', (e) => {
+  if (e.target === $('help-sheet')) $('help-sheet').classList.remove('is-open');
+});
+for (const btn of document.querySelectorAll('.help-tab')) {
+  btn.addEventListener('click', () => setHelpTab(btn.dataset.tab));
+}
+$('help-filter').addEventListener('input', () => void renderHelpCommands($('help-filter').value));
 
 $('btn-refresh').addEventListener('click', () => refreshSessions(true));
 
@@ -1544,4 +2031,6 @@ if ('serviceWorker' in navigator) {
 }
 
 initTheme();
+markSession();
+updateComposer();
 routeStart();

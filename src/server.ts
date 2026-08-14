@@ -14,6 +14,7 @@ import {
   verifySession,
 } from './auth.js';
 import { BrowseError, listDir, makeDir } from './browse.js';
+import { listCommands } from './commands.js';
 import { HOST, PORT, REPO_ROOTS, getToken, loadServers } from './config.js';
 import { createSession, listRepoDirs } from './create.js';
 import { bindPane, listPaneCandidates, listSessions } from './discovery.js';
@@ -98,6 +99,21 @@ class SessionCache {
 
 const sessions = new SessionCache();
 const hub = new StreamHub();
+
+/**
+ * The remote home directory, cached for the life of the process.
+ *
+ * It costs a round trip to ask and cannot change while the hub runs, yet the session
+ * list wants it on every poll — the client shortens paths to `~/…` with it.
+ */
+const homes = new Map<string, string>();
+async function homeOf(serverId: string): Promise<string> {
+  const known = homes.get(serverId);
+  if (known) return known;
+  const { home } = await probe(execFor(serverId));
+  homes.set(serverId, home);
+  return home;
+}
 
 /** Extract the presented credential from either the header or the query string. */
 function presentedToken(req: IncomingMessage, url: URL): string | null {
@@ -262,7 +278,24 @@ async function handleApi(
   // GET /api/servers/:id/sessions
   if (parts[3] === 'sessions' && parts.length === 4 && method === 'GET') {
     const fresh = url.searchParams.get('fresh') === '1';
-    return sendJson(res, 200, { sessions: await sessions.list(serverId, fresh ? 0 : 4_000) });
+    const [list, home] = await Promise.all([
+      sessions.list(serverId, fresh ? 0 : 4_000),
+      homeOf(serverId),
+    ]);
+    return sendJson(res, 200, { sessions: list, home });
+  }
+
+  /*
+   * GET /api/servers/:id/commands?cwd=…
+   *
+   * Built-in slash commands plus whatever this machine and this project define, for
+   * the composer's autocomplete. `cwd` is the session's directory: without it only
+   * the user-wide commands are listed, since project ones are per-directory.
+   */
+  if (parts[3] === 'commands' && method === 'GET') {
+    const cwd = url.searchParams.get('cwd');
+    if (cwd !== null && !cwd.startsWith('/')) throw new HttpError(400, 'cwd must be absolute');
+    return sendJson(res, 200, await listCommands(exec, await homeOf(serverId), cwd));
   }
 
   // POST /api/servers/:id/sessions  {dir, skipPermissions}
@@ -569,9 +602,8 @@ function attachSocket(ws: WebSocket, url: URL): void {
 
   // Keep the chat list live even when a single session is being watched.
   const pushSessions = () => {
-    void sessions
-      .list(serverId, 4_000)
-      .then((list) => send({ type: 'sessions', sessions: list }))
+    void Promise.all([sessions.list(serverId, 4_000), homeOf(serverId)])
+      .then(([list, home]) => send({ type: 'sessions', sessions: list, home }))
       .catch((err: unknown) => console.error('[ws] session list failed:', err));
   };
   pushSessions();

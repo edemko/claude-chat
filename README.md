@@ -175,18 +175,52 @@ default.
 
 ## Using it
 
-- **Sessions list** — one row per tmux pane running `claude`, repo name first, with a
-  breathing dot while a session is mid-turn.
-- **New session** — pick a repo from `CC_REPO_ROOTS`; the hub launches
-  `claude --session-id <uuid>` in a fresh tmux session.
+- **Sessions list** — grouped by the project each session runs in. A git repo is
+  highlighted; a plain folder is dimmed and labelled as one. Work here is organised by
+  project because conversation names repeat across them and a repo is the unit of work.
+- **New session** — pick a repo from `CC_REPO_ROOTS`, or browse to any folder on the
+  machine and create one. The hub launches `claude --session-id <uuid>` in a fresh tmux
+  session.
 - **Chat** — messages and expandable tool chips. Markdown, with bold and italic in their
-  own colours. Long-press a message to copy it.
+  own colours. Code blocks have a copy button; tap inline code to copy it.
+- **Slash commands** — type `/` and a menu of matching commands opens, with descriptions.
+  ↑/↓ move, Tab or Enter completes, Esc closes. The name is coloured in the compose box
+  as you type, and a command the session will not recognise is flagged before you send
+  it. See below for where the list comes from.
 - **Key bar** — `esc`, `^C`, arrows, `tab`, `enter`, plus `screen` (peek at the raw pane)
   and `conversation` (fix a wrong transcript match).
 - **Screenshot** — 🖼 sends an image; whatever is in the compose box becomes its caption.
 - **ⓘ** — model, effort, context tokens, branch, turn counts, uptime, and the pane's own
   status line scraped verbatim.
-- **☰** — server browser. Add another hub and it keeps both, each with its own login.
+- **☰** — server browser, and **Help & commands**: what everything does, plus every
+  command this session accepts.
+- **↓** — appears while scrolled up, and turns orange when something arrives while you
+  are reading back. The view never jumps to the bottom on its own.
+
+### On a wide screen
+
+Past 900 px the app splits: sessions stay in a sidebar on the left, the conversation
+fills the rest, and there is no back button because there is nothing to go back to. The
+thread is held to a readable column rather than stretching across a monitor. `Enter`
+sends and `Shift-Enter` starts a new line — on a phone the ↑ button still sends, since
+`Enter` there is the keyboard's newline.
+
+### Where the command list comes from
+
+`GET /api/servers/:id/commands?cwd=…` merges three sources:
+
+- **Built-ins** — a curated list in `src/commands.ts`, topped up by reading the
+  definitions out of the installed `claude` binary. That scan costs ~60 ms and is cached
+  against the binary's size and mtime, so an upgrade picks up new commands by itself.
+  Extraction only ever *adds* entries; if it finds nothing the curated list still works.
+- **Your commands** — `~/.claude/commands/**.md`, and `.claude/commands/**.md` in the
+  project. A nested folder namespaces the command: `commands/review/api.md` is
+  `/review:api`. The `description:` in its frontmatter is what the menu shows; without
+  frontmatter the first line of prose is used.
+- **Skills** — `SKILL.md` under `~/.claude/skills/*/` and the project's.
+
+A project command shadows a user one of the same name, and either shadows a built-in —
+the same order Claude Code resolves them in.
 
 ## How it works
 
@@ -299,6 +333,7 @@ npm run build          # tsc
 npm run typecheck
 node scripts/test-discovery.mjs    # dedupe + status-line scraping, no server needed
 node scripts/test-markdown.mjs     # markdown renderer against a DOM stub
+node scripts/test-commands.mjs     # slash-command parsing and ranking
 node scripts/smoke-ws.mjs          # end-to-end live stream, throwaway session
 ```
 
@@ -343,6 +378,12 @@ Three Android details that would each have silently broken a release build:
   jitters ±1 s, silently breaks every lookup. Key on pid.
 - Never `pkill node` on a box running Claude Code; every session is a node process. And
   `pkill -f dist/server.js` matches your own shell — use `lsof -ti tcp:7420`.
+- A flex item will not shrink below its content unless given `min-width: 0`. One long
+  `cwd` in the sidebar made it 1113 px wide instead of 340, and `flex: 0 0 340px` looked
+  like it should have prevented exactly that.
+- Typing a slash command opens the TUI's *own* completion menu. Verified before building
+  on it: one `Enter` still submits, and typing a space closes the menu first — so
+  `send-keys` needs no special case. Worth re-checking if it ever starts eating sends.
 
 ## Layout
 
@@ -356,10 +397,12 @@ src/input.ts       send-keys, bracketed paste, key whitelist, not-claude guard
 src/create.ts      --session-id launch, trust prompt, startup settle, repo picker
 src/info.ts        the ⓘ sheet: scraped status line + transcript-derived facts
 src/upload.ts      screenshots: magic-byte check, write on the session's machine
+src/commands.ts    slash commands: curated built-ins, binary scan, custom + skills
 src/auth.ts        scrypt passwords, session tokens, lockout
 src/server.ts      HTTP + WebSocket, token auth, static PWA
 web/               the PWA (vanilla, no build step)
 web/markdown.js    DOM-building markdown renderer (never innerHTML)
+web/commands.js    command matching and help copy — pure, testable, no DOM
 flutter_client/    native Android client against the same API
 scripts/           notification hook, APK build/publish, headless tests
 deploy/            systemd user unit, ntfy compose

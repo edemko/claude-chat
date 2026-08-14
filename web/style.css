@@ -471,21 +471,71 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   align-items: flex-end;
   padding: 0 var(--pad) 12px;
 }
-.compose-row textarea {
+
+/*
+ * The box you type in is a field wrapping two layers: the textarea, and a mirror of
+ * its text underneath that can be coloured per token. The border, background and
+ * radius live on the field so both layers share one box and cannot drift apart —
+ * misaligned by a pixel, a highlight layer looks like a rendering bug.
+ */
+.compose-field {
+  position: relative;
   flex: 1;
+  min-width: 0;
   min-height: 42px;
-  max-height: 34vh;
-  resize: none;
-  padding: 10px 13px;
   border-radius: 20px;
   border: 1px solid var(--line);
   background: var(--panel);
-  color: var(--text);
+}
+.compose-field:focus-within { border-color: var(--you); }
+
+.compose-field textarea,
+.compose-mirror {
+  width: 100%;
+  min-height: 40px;
+  max-height: 34vh;
+  padding: 10px 13px;
+  border: none;
   font-family: var(--sans);
   font-size: 16px;
   line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
 }
-.compose-row textarea::placeholder { color: var(--muted); }
+.compose-field textarea {
+  display: block;
+  resize: none;
+  background: none;
+  color: var(--text);
+  position: relative;
+}
+.compose-field textarea:focus { outline: none; }
+.compose-field textarea::placeholder { color: var(--muted); }
+
+.compose-mirror {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--text);
+  display: none;
+}
+/*
+ * Only while a slash command is being typed. Hiding the real text is a real risk —
+ * a font or padding mismatch and you are typing into nothing — so it is switched on
+ * for the one short line where the highlight is worth it, and never for prose.
+ */
+.compose-field.is-cmd .compose-mirror { display: block; }
+.compose-field.is-cmd textarea { color: transparent; caret-color: var(--text); }
+
+/* Known command: the accent. Unknown: warned about, before it costs a turn. */
+.cmd-tok { font-weight: 640; }
+.cmd-tok.is-known { color: var(--you); }
+.cmd-tok.is-unknown {
+  color: var(--warn);
+  text-decoration: underline wavy;
+  text-underline-offset: 3px;
+}
 .send {
   flex: 0 0 auto;
   width: 42px;
@@ -689,9 +739,14 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 }
 .drawer-head h2 { margin: 0; flex: 1; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
 .drawer-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 12px var(--pad) calc(16px + var(--safe-b));
   border-top: 1px solid var(--line);
 }
+/* Dashed reads as "add one"; help is a place that already exists. */
+.drawer-foot .ghost { border-style: solid; background: var(--panel); }
 .drawer-foot button {
   width: 100%;
   padding: 13px;
@@ -954,4 +1009,272 @@ code[data-copy='inline'].is-copied {
   background: var(--panel);
   color: var(--text);
   font-size: 14px;
+}
+
+/* ---------- slash command menu ---------- */
+
+/*
+ * In flow above the key bar, not floating over the thread. A popup anchored to the
+ * text box ends up behind the on-screen keyboard on Android, which is precisely
+ * where it must not be.
+ */
+.cmd-pop {
+  max-height: min(38vh, 300px);
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+.cmd-pop[hidden] { display: none; }
+
+.cmd-row {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  width: 100%;
+  text-align: left;
+  padding: 9px var(--pad);
+  border-bottom: 1px solid var(--line);
+}
+.cmd-row:last-child { border-bottom: none; }
+.cmd-row.is-on { background: var(--raised); }
+.cmd-row-name {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--you);
+}
+.cmd-row-hint {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+.cmd-row-desc {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Yours, not Anthropic's — worth saying, since a name can shadow a built-in. */
+.cmd-tag {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--strong);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 1px 5px;
+}
+
+/* What the command about to be sent actually does. */
+.cmd-hint {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 7px var(--pad);
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+.cmd-hint[hidden] { display: none; }
+.cmd-hint .name { font-family: var(--mono); color: var(--you); flex: 0 0 auto; }
+.cmd-hint .what { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cmd-hint.is-unknown .name { color: var(--warn); }
+
+/* ---------- jump to the latest message ---------- */
+
+.thread-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.to-bottom {
+  position: absolute;
+  right: 16px;
+  bottom: 14px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 17px;
+  line-height: 1;
+  box-shadow: 0 4px 16px var(--shadow);
+}
+.to-bottom[hidden] { display: none; }
+/* Something arrived while you were reading back. */
+.to-bottom.has-new { border-color: var(--live); color: var(--live); }
+
+/* ---------- sessions grouped by project ---------- */
+
+.proj { border-bottom: 1px solid var(--line); }
+.proj:last-child { border-bottom: none; }
+.proj-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px var(--pad) 4px;
+}
+.proj-name {
+  font-size: 13px;
+  font-weight: 680;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A repo is the unit of work here; a plain folder is the exception, and reads as one. */
+.proj.is-repo .proj-name { color: var(--strong); }
+.proj:not(.is-repo) .proj-name { color: var(--muted); font-weight: 600; }
+.proj-badge {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0 4px;
+}
+.proj.is-repo .proj-badge { color: var(--strong); }
+.proj-path {
+  flex: 1;
+  /* A flex item will not shrink below its content unless told it may, and an
+     unbroken path is very wide content — without this the sidebar ends up as wide
+     as the longest cwd in the list. */
+  min-width: 0;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.proj .session { border-bottom: none; padding-top: 9px; padding-bottom: 9px; }
+.proj .session:last-child { padding-bottom: 13px; }
+.session.is-current { background: var(--panel); }
+.session.is-current .session-title { color: var(--you); }
+
+/* ---------- help ---------- */
+
+.sheet-panel.is-tall { height: 88dvh; max-height: 88dvh; }
+
+.help-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 10px var(--pad) 0;
+}
+.help-tab {
+  padding: 6px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--muted);
+}
+.help-tab.is-on { background: var(--panel); color: var(--text); border-color: var(--you); }
+
+.help-filter {
+  margin: 10px var(--pad) 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 15px;
+}
+.help-filter[hidden] { display: none; }
+.help-filter::placeholder { color: var(--muted); }
+.help-filter:focus { outline: none; border-color: var(--you); }
+
+.help-sec { padding: 6px 0 10px; }
+.help-sec h3 {
+  margin: 14px 0 6px;
+  padding: 0 var(--pad);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.help-item { padding: 7px var(--pad); }
+.help-term { font-size: 14px; font-weight: 600; color: var(--text); }
+.help-term.mono { font-family: var(--mono); font-size: 13px; color: var(--you); }
+.help-text { margin-top: 2px; font-size: 13px; line-height: 1.45; color: var(--muted); }
+.help-foot {
+  padding: 14px var(--pad) 20px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.help-foot code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: 5px;
+}
+
+/* ---------- empty chat ---------- */
+
+.chat-empty {
+  display: none;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pad);
+  text-align: center;
+  color: var(--muted);
+}
+.chat-empty strong { display: block; color: var(--text); font-weight: 560; margin-bottom: 6px; }
+
+/* ---------- wide screens: sidebar and chat together ---------- */
+
+/*
+ * Below this the app is two full-screen views with a back button, which is right on a
+ * phone. Above it there is room for both at once, and the session list stops being a
+ * place you navigate to and becomes a place you look at.
+ */
+@media (min-width: 900px) {
+  body.is-split { flex-direction: row; height: 100dvh; }
+  /* Both halves take the row's height rather than measuring the viewport again. */
+  body.is-split .screen { height: 100%; }
+
+  body.is-split #screen-list {
+    display: flex;
+    flex: 0 0 340px;
+    /* Same reason as .proj-path: min-width defaults to the widest thing inside. */
+    min-width: 0;
+    border-right: 1px solid var(--line);
+  }
+  body.is-split #screen-chat {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  /* The list is never left behind, so there is nothing to go back to. */
+  body.is-split #btn-back { display: none; }
+
+  /* No session picked: the chat half explains itself rather than sitting blank. */
+  body.is-split.no-session #screen-chat > *:not(.chat-empty) { display: none; }
+  body.is-split.no-session .chat-empty { display: flex; }
+
+  /* A thread the full width of a monitor is unreadable; hold it to a column. */
+  .thread, .cmd-pop, .compose-row, .cmd-hint, .keybar {
+    max-width: 900px;
+    margin-left: auto;
+    margin-right: auto;
+    width: 100%;
+  }
+  .topbar { padding-top: 14px; }
 }

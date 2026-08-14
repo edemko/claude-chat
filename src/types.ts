@@ -40,6 +40,8 @@ export interface SessionInfo {
   tmuxSession: string;
   pid: number;
   cwd: string;
+  /** cwd holds a `.git`, so the session is working in a repo rather than a folder. */
+  isRepo: boolean;
   title: string;
   status: SessionStatus;
   confidence: MatchConfidence;
@@ -59,5 +61,5 @@ export type ChatEvent =
 
 export type WsMessage =
   | { type: 'events'; sessionUuid: string; events: ChatEvent[] }
-  | { type: 'sessions'; sessions: SessionInfo[] }
+  | { type: 'sessions'; sessions: SessionInfo[]; home: string }
   | { type: 'error'; message: string };

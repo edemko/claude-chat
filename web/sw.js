@@ -1,5 +1,5 @@
-const CACHE = 'claude-chat-v12';
-const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/markdown.js', '/icon.svg', '/manifest.webmanifest'];
+const CACHE = 'claude-chat-v13';
+const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/markdown.js', '/commands.js', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
