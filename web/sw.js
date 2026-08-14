@@ -1,4 +1,4 @@
-const CACHE = 'claude-chat-v15';
+const CACHE = 'claude-chat-v16';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/markdown.js', '/commands.js', '/icon.svg', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {

@@ -205,9 +205,16 @@ default.
 - **ⓘ** — model, effort, context tokens, branch, turn counts, uptime, and the pane's own
   status line scraped verbatim.
 - **☰** — server browser, and **Help & commands**: what everything does, plus every
-  command this session accepts. Each server can be renamed — the hub that served the
-  page adds itself automatically and only knows its own address, so it starts out called
-  `100.x.y.z`. Signing in again refreshes the token and keeps the name.
+  command this session accepts. Star a server and it appears in a quick-switch bar under
+  the session list; switching slides the list the direction you moved. Servers can also
+  be renamed, and signing in again refreshes the token without losing the name.
+
+  Three names can exist for one server, in this order of authority: one you typed, the
+  label the hub reports for itself (learned on first connection and cached, so the drawer
+  and the chips can show it without a request), then the bare address. The automatic
+  label assigned at first sign-in *is* the address, so it counts as unnamed rather than
+  as a choice — otherwise the drawer showed `100.75.240.46` while the header, reading the
+  hub's own label, said `sam`.
 - **↓** — appears while scrolled up, and turns orange when something arrives while you
   are reading back. The view never jumps to the bottom on its own.
 
@@ -420,6 +427,9 @@ Three Android details that would each have silently broken a release build:
 - The drawer is `z-index: 25` and sheets are `20`, so a modal opened *from* the drawer
   rendered beneath the drawer's own scrim and looked like a theme bug. Close the drawer
   first, as the help sheet already did.
+- A pane that slides its contents needs `overflow-x: clip` or the outgoing content
+  travels across whatever is beside it. `clip`, not `hidden`: `hidden` would make the
+  pane a scroll container and take over the inner list's scrolling.
 - Typing a slash command opens the TUI's *own* completion menu. Verified before building
   on it: one `Enter` still submits, and typing a space closes the menu first — so
   `send-keys` needs no special case. Worth re-checking if it ever starts eating sends.

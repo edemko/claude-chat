@@ -1504,3 +1504,97 @@ button.ghost.is-busy::after { --spin: var(--muted); }
     50%      { opacity: 0.25; }
   }
 }
+
+/* ---------- starred servers ---------- */
+
+.conn-star {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.conn-star:active { background: var(--raised); }
+.conn-star .ico { width: 17px; height: 17px; }
+/* Starred: filled, in the emphasis accent — the same colour that marks a repo, since
+   both mean "this is the one you actually work with". */
+.conn-star.is-on { color: var(--strong); }
+.conn-star.is-on .ico { fill: currentColor; }
+
+/*
+ * The quick-switch bar, pinned under the session list.
+ *
+ * Horizontally scrollable rather than wrapping: a wrapped row of chips changes the
+ * height of the pane as servers are starred, which moves the list under your thumb.
+ */
+.fav-bar {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 7px;
+  padding: 9px var(--pad) calc(9px + var(--safe-b));
+  border-top: 1px solid var(--line);
+  background: var(--ink);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.fav-bar::-webkit-scrollbar { display: none; }
+.fav-bar[hidden] { display: none; }
+
+.fav {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 190px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel);
+  font-size: 13px;
+  color: var(--muted);
+}
+.fav-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fav:active { background: var(--raised); }
+/* The server you are looking at. Not a button you would press to get where you are. */
+.fav.is-on {
+  border-color: var(--you);
+  color: var(--you);
+  font-weight: 600;
+}
+/*
+ * Always filled. Every chip in this bar is starred by definition, so varying the fill
+ * would say "this one is not" — the thing it means everywhere else. Colour carries
+ * which server you are on; the star only says why the chip is here at all.
+ */
+.fav .ico { width: 13px; height: 13px; flex: 0 0 auto; fill: currentColor; }
+
+/* ---------- switching servers ---------- */
+
+/*
+ * The list slides the way you are moving through the bar, so a switch reads as
+ * lateral travel between servers rather than a flicker of new content.
+ *
+ * `overflow-x: clip` keeps the outgoing list inside its own pane — without it, on a
+ * wide screen the sidebar's content slides across the conversation beside it. `clip`
+ * rather than `hidden` because hidden would make this a scroll container and steal
+ * the inner list's scrolling.
+ */
+#screen-list {
+  overflow-x: clip;
+}
+
+/* Star, rename and remove travel together and share a tighter gap than the row's. */
+.conn-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+/* One line, always: a wrapped address made rows different heights. */
+.conn-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

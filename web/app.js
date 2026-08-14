@@ -66,6 +66,26 @@ function connOrigin(conn) {
   return `http://${conn.host}:${conn.port}`;
 }
 
+/**
+ * What to call a server.
+ *
+ * Three names can exist for one connection and they are not equal in authority:
+ *
+ *   1. a name the user typed — always wins
+ *   2. `hubLabel`, what the hub calls itself, learned on the first successful boot
+ *      and cached so the drawer can show it before any request is made
+ *   3. the address, which is a fallback and not a name
+ *
+ * The label assigned automatically at first sign-in *is* the address, so a label
+ * equal to `host` counts as unnamed rather than as a choice. Without this the drawer
+ * showed `100.75.240.46` while the header, reading the hub's own label, said `sam`.
+ */
+function connName(conn) {
+  if (!conn) return '';
+  if (conn.label && conn.label !== conn.host) return conn.label;
+  return conn.hubLabel ?? conn.host;
+}
+
 function setActive(id) {
   state.activeId = id;
   localStorage.setItem(ACTIVE_KEY, id);
@@ -298,6 +318,7 @@ function forgetActive() {
   state.session = null;
   state.sessions = [];
   markSession();
+  renderFavourites();
 }
 
 async function doLogin(event) {
@@ -413,17 +434,28 @@ $('account-sheet').addEventListener('click', (e) => {
 
 /* ---------- server browser ---------- */
 
-/** Cheap per-server probe for the drawer: reachable, and who we are there. */
+/**
+ * Cheap per-server probe for the drawer: reachable, who we are, and what it calls
+ * itself. Both requests together, since one round trip's latency covers both and the
+ * name is only learnable by asking — a favourite you have never opened would
+ * otherwise sit in the quick-switch bar as a bare address forever.
+ */
 async function probeConn(conn) {
-  try {
-    const res = await fetch(`${connOrigin(conn)}/api/me`, {
+  const get = (path) =>
+    fetch(`${connOrigin(conn)}${path}`, {
       headers: { authorization: `Bearer ${conn.token}` },
       signal: AbortSignal.timeout(6000),
     });
-    if (res.status === 401) return { state: 'unauthorised' };
-    if (!res.ok) return { state: 'error' };
-    const body = await res.json();
-    return { state: 'ok', username: body.username };
+  try {
+    const [meRes, srvRes] = await Promise.all([get('/api/me'), get('/api/servers')]);
+    if (meRes.status === 401) return { state: 'unauthorised' };
+    if (!meRes.ok) return { state: 'error' };
+    const me = await meRes.json();
+    // The name is a nicety; a failure here must not make a reachable server look down.
+    const hubLabel = srvRes.ok
+      ? (await srvRes.json().catch(() => null))?.servers?.[0]?.label ?? null
+      : null;
+    return { state: 'ok', username: me.username, hubLabel };
   } catch {
     return { state: 'unreachable' };
   }
@@ -440,7 +472,7 @@ function connRow(conn) {
 
   const name = document.createElement('div');
   name.className = 'conn-name';
-  name.textContent = conn.label ?? conn.host;
+  name.textContent = connName(conn);
 
   const meta = document.createElement('div');
   meta.className = 'conn-meta meta';
@@ -449,10 +481,25 @@ function connRow(conn) {
   pick.append(name, meta);
   pick.addEventListener('click', () => selectConn(conn.id));
 
+  const star = document.createElement('button');
+  star.type = 'button';
+  star.className = `conn-star${conn.fav ? ' is-on' : ''}`;
+  star.setAttribute('aria-pressed', conn.fav ? 'true' : 'false');
+  star.setAttribute(
+    'aria-label',
+    conn.fav ? `Unstar ${connName(conn)}` : `Star ${connName(conn)}`,
+  );
+  star.title = conn.fav ? 'Starred — shown in the quick-switch bar' : 'Star for quick switching';
+  star.innerHTML = STAR_SVG;
+  star.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleFav(conn.id);
+  });
+
   const rename = document.createElement('button');
   rename.type = 'button';
   rename.className = 'conn-edit';
-  rename.setAttribute('aria-label', `Rename ${conn.label ?? conn.host}`);
+  rename.setAttribute('aria-label', `Rename ${connName(conn)}`);
   rename.title = 'Rename';
   rename.innerHTML =
     '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">' +
@@ -467,16 +514,27 @@ function connRow(conn) {
   remove.type = 'button';
   remove.className = 'conn-remove';
   remove.textContent = '✕';
-  remove.setAttribute('aria-label', `Remove ${conn.label ?? conn.host}`);
+  remove.setAttribute('aria-label', `Remove ${connName(conn)}`);
   remove.addEventListener('click', (e) => {
     e.stopPropagation();
     removeConn(conn.id);
   });
 
-  row.append(pick, rename, remove);
+  // Grouped, so the row's 11 px gap is spent once rather than three times — with the
+  // buttons as direct children the body lost ~50 px and the address wrapped, which
+  // made rows different heights depending on how long an address was.
+  row.append(pick, mk('div', 'conn-actions', [star, rename, remove]));
 
   // Fire-and-forget: the row renders immediately and fills in its status.
   void probeConn(conn).then((r) => {
+    if (r.hubLabel && r.hubLabel !== conn.hubLabel) {
+      saveConnections(
+        state.connections.map((c) => (c.id === conn.id ? { ...c, hubLabel: r.hubLabel } : c)),
+      );
+      // Only where no name was chosen — a rename must not be undone by a probe.
+      if (!conn.label || conn.label === conn.host) name.textContent = r.hubLabel;
+      renderFavourites();
+    }
     meta.textContent =
       `${conn.host}:${conn.port} · ` +
       (r.state === 'ok'
@@ -489,6 +547,60 @@ function connRow(conn) {
   });
 
   return row;
+}
+
+/*
+ * One path, reused at three sizes: the drawer's toggle, the quick-switch chips, and
+ * the empty-state hint. `fill` is set by CSS, so the same markup is an outline or a
+ * solid star depending only on whether it is starred.
+ */
+const STAR_SVG =
+  '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">' +
+  '<path d="M12 3.6l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 17l-5.25 2.75 1-5.85L3.5 9.75l5.9-.85z"/>' +
+  '</svg>';
+
+/**
+ * Starred servers, in the order they appear in the drawer.
+ *
+ * Deliberately the same order as the list you starred them from — a bar that sorted
+ * itself would move a chip out from under your thumb between one tap and the next.
+ */
+function favourites() {
+  return state.connections.filter((c) => c.fav);
+}
+
+function toggleFav(id) {
+  const conn = state.connections.find((c) => c.id === id);
+  if (!conn) return;
+  const on = !conn.fav;
+  saveConnections(
+    // `fav: undefined` rather than `false`: nothing reads it as a tri-state, and it
+    // keeps stored connections from accumulating dead keys.
+    state.connections.map((c) => (c.id === id ? { ...c, fav: on || undefined } : c)),
+  );
+  renderConnections();
+  renderFavourites();
+  toast(on ? `${connName(conn)} starred` : `${connName(conn)} unstarred`);
+}
+
+function favChip(conn) {
+  const active = conn.id === state.activeId;
+  const chip = mk('button', `fav${active ? ' is-on' : ''}`, []);
+  chip.type = 'button';
+  chip.innerHTML = STAR_SVG;
+  chip.append(mk('span', 'fav-name', [connName(conn)]));
+  chip.setAttribute('aria-current', active ? 'true' : 'false');
+  // Tapping the server you are already on would otherwise tear the list down and
+  // rebuild it identically, animation and all.
+  if (!active) chip.addEventListener('click', () => selectConn(conn.id));
+  return chip;
+}
+
+function renderFavourites() {
+  const bar = $('fav-bar');
+  const favs = favourites();
+  bar.hidden = favs.length === 0;
+  bar.replaceChildren(...favs.map(favChip));
 }
 
 function renderConnections() {
@@ -510,19 +622,72 @@ function closeDrawer() {
   $('drawer').classList.remove('is-open');
 }
 
+/*
+ * Slide the session list aside, swap servers, slide the new one in.
+ *
+ * Direction comes from the servers' position in the list, so moving to one further
+ * down slides left — the same spatial logic as the quick-switch bar it is usually
+ * driven from. The Web Animations API rather than classes and `animationend`: the
+ * promise makes "swap the content at the midpoint" a straight `await`, with no
+ * listener to leak if the switch is abandoned halfway.
+ */
+const SWITCH_OUT_MS = 130;
+const SWITCH_IN_MS = 190;
+
+async function slideSwitch(direction, swap) {
+  const list = $('session-list');
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    await swap();
+    return;
+  }
+  await list.animate(
+    [
+      { transform: 'none', opacity: 1 },
+      { transform: `translateX(${-100 * direction}%)`, opacity: 0 },
+    ],
+    { duration: SWITCH_OUT_MS, easing: 'ease-in' },
+  ).finished;
+
+  await swap();
+
+  list.animate(
+    [
+      { transform: `translateX(${100 * direction}%)`, opacity: 0 },
+      { transform: 'none', opacity: 1 },
+    ],
+    { duration: SWITCH_IN_MS, easing: 'ease-out' },
+  );
+}
+
 /** Switch servers: drop all per-server state, then boot against the new one. */
 async function selectConn(id) {
-  if (id !== state.activeId) {
+  if (id === state.activeId) {
+    // Already here. Still close the drawer, since that is what the tap asked for.
+    closeDrawer();
+    show('list');
+    return;
+  }
+
+  const from = state.connections.findIndex((c) => c.id === state.activeId);
+  const to = state.connections.findIndex((c) => c.id === id);
+  const direction = from >= 0 && to >= 0 && to < from ? -1 : 1;
+
+  closeDrawer();
+  show('list');
+
+  await slideSwitch(direction, async () => {
     setActive(id);
     closeWs();
     state.session = null;
     state.sessions = [];
     state.serverId = null;
     markSession();
+    // Emptied before the incoming half of the animation, so what slides in is the new
+    // server's list rather than the old one's rows retitled a moment later.
     renderSessions();
-  }
-  closeDrawer();
-  show('list');
+    renderFavourites();
+  });
+
   await boot();
 }
 
@@ -539,7 +704,8 @@ async function removeConn(id) {
     markSession();
   }
   renderConnections();
-  toast(`Removed ${conn.label ?? conn.host}`);
+  renderFavourites();
+  toast(`Removed ${connName(conn)}`);
   if (!activeConn()) {
     closeDrawer();
     await routeStart();
@@ -641,7 +807,10 @@ function openRename(id) {
   // The drawer sits above sheets in the stack, so its scrim would dim this modal.
   closeDrawer();
   renamingId = id;
-  $('name-input').value = conn.label ?? '';
+  // Only a name the user picked is prefilled. Seeding the box with the address, or
+  // with the hub's own label, turns "give this a name" into "edit this text".
+  $('name-input').value = conn.label && conn.label !== conn.host ? conn.label : '';
+  $('name-input').placeholder = conn.hubLabel ?? 'e.g. sam';
   $('name-where').textContent = `${conn.host}:${conn.port}`;
   $('name-sheet').classList.add('is-open');
   $('name-input').focus();
@@ -663,8 +832,9 @@ function saveRename(event) {
     state.connections.map((c) => (c.id === conn.id ? { ...c, label: name || undefined } : c)),
   );
   closeRename();
+  renderFavourites();
   const active = activeConn();
-  if (active) $('server-label').textContent = active.label ?? active.host;
+  if (active) $('server-label').textContent = connName(active);
   // Back to the list you were editing, now showing the new name.
   openDrawer();
   toast(name ? `Renamed to ${name}` : 'Name cleared');
@@ -2208,9 +2378,10 @@ async function boot() {
     await showLogin();
     return;
   }
-  $('server-label').textContent = conn.label ?? conn.host;
+  $('server-label').textContent = connName(conn);
   show('list');
   renderSessions();
+  renderFavourites();
   try {
     const data = await api('/api/servers');
     const first = data.servers[0];
@@ -2219,7 +2390,16 @@ async function boot() {
       return;
     }
     state.serverId = first.id;
-    $('server-label').textContent = first.label;
+    // Remember what the hub calls itself, so the drawer and the quick-switch chips can
+    // show a name rather than an address without waiting on a request of their own.
+    if (first.label && first.label !== conn.hubLabel) {
+      saveConnections(
+        state.connections.map((c) => (c.id === conn.id ? { ...c, hubLabel: first.label } : c)),
+      );
+      renderFavourites();
+      if ($('drawer').classList.contains('is-open')) renderConnections();
+    }
+    $('server-label').textContent = connName(activeConn());
     await refreshSessions(true);
     setInterval(() => {
       if (document.visibilityState === 'visible' && !state.session) refreshSessions();
