@@ -1457,3 +1457,50 @@ button.ghost:active { background: var(--raised); }
 .drop-card .ico { width: 34px; height: 34px; color: var(--you); }
 .drop-card strong { font-size: 15px; font-weight: 620; }
 .drop-card span { font-size: 12.5px; color: var(--muted); }
+
+/* ---------- busy buttons ---------- */
+
+/*
+ * Signing in reaches across a network with a 20 s timeout behind it. A button that
+ * only greys out looks like it ignored the tap, and the natural response to that is
+ * to tap it again.
+ *
+ * `color: transparent` rather than replacing the label: the button keeps its exact
+ * width, so nothing shifts as the spinner appears and the layout cannot reflow under
+ * a finger that is still on the button.
+ */
+button.is-busy {
+  position: relative;
+  color: transparent;
+  pointer-events: none;
+}
+button.is-busy::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 17px;
+  height: 17px;
+  margin: -8.5px 0 0 -8.5px;
+  border-radius: 50%;
+  /* One gap in the ring is what reads as rotation. */
+  border: 2px solid var(--spin, var(--on-you));
+  border-top-color: transparent;
+  animation: spin 680ms linear infinite;
+}
+button.ghost.is-busy::after { --spin: var(--muted); }
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+/* Rotation is the thing to avoid here, not the feedback: pulse instead. */
+@media (prefers-reduced-motion: reduce) {
+  button.is-busy::after {
+    animation: busy-pulse 1.2s ease-in-out infinite;
+    border-top-color: var(--spin, var(--on-you));
+  }
+  @keyframes busy-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.25; }
+  }
+}

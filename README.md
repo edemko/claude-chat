@@ -124,6 +124,16 @@ otherwise the next pull silently repoints the service.
 | `CC_NTFY_LABEL` | *(empty)* | Prefixed to notification titles. Set per host once more than one hub publishes to a topic. |
 | `CC_APP_URL` | `http://127.0.0.1:7420/` | Where tapping a notification goes. Set per host. |
 
+### The address is the whole configuration
+
+The hub binds to **one** interface. Whatever `CC_HOST` names is the only address it
+answers on — that bind is the security boundary, so a machine with a public IP still
+answers only on its tailnet address. Reaching one at its public IP therefore fails in a
+way that looks exactly like Tailscale being off, which is why "add a server" now says so
+explicitly when the address you typed is a public IPv4.
+
+Use the `100.x.y.z` address, or the `<machine>.ts.net` MagicDNS name.
+
 ### Reaching it from your phone
 
 **The bind address is the security boundary.** Any credential here is effectively shell

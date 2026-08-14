@@ -164,6 +164,28 @@ const SCENES = {
     await evaluate(`document.getElementById('btn-menu').click();
                     document.getElementById('btn-add-quick').click(); 'ok'`);
   },
+  // A real in-flight sign-in, not a forced class: 192.0.2.1 is RFC 5737 TEST-NET-1,
+  // so the connection hangs and the 20 s timeout is still counting when the shutter
+  // opens. That also exercises the public-address hint on the way out.
+  signingin: async () => {
+    await evaluate(`document.getElementById('btn-menu').click();
+                    document.getElementById('btn-add-quick').click(); 'ok'`);
+    await sleep(300);
+    await evaluate(`
+      document.getElementById('add-host').value = '192.0.2.1';
+      document.getElementById('add-user').value = 'someone';
+      document.getElementById('add-pass').value = 'secret';
+      document.getElementById('add-form').dispatchEvent(
+        new Event('submit', { bubbles: true, cancelable: true }));
+      'ok'
+    `);
+    await sleep(1500);
+  },
+  // The same attempt, waited out past the 20 s timeout, to see the message it lands on.
+  signinfail: async () => {
+    await SCENES.signingin();
+    await sleep(21_000);
+  },
   rename: async () => {
     await evaluate(`document.getElementById('btn-menu').click(); 'ok'`);
     await sleep(300);
@@ -260,6 +282,9 @@ const report = await evaluate(`JSON.stringify({
     return c.scrollHeight > c.clientHeight;
   })(),
   dropVeil: !document.getElementById('drop-veil').hidden,
+  submitBusy: document.getElementById('add-submit').classList.contains('is-busy'),
+  submitDisabled: document.getElementById('add-submit').disabled,
+  addError: document.getElementById('add-error').textContent || null,
   dropVeilPaint: (() => {
     const v = document.getElementById('drop-veil');
     const cs = getComputedStyle(v);

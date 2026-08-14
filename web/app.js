@@ -249,6 +249,19 @@ function mk(tag, className, children = []) {
   return node;
 }
 
+/**
+ * Mark a button as working.
+ *
+ * Disabled alone reads as "the tap did nothing", and the honest response to that is
+ * to tap again — which for a sign-in means a second request against a lockout
+ * counter. The spinner is CSS; this only toggles the class and the disabled state
+ * together so the two cannot drift apart.
+ */
+function setBusy(button, busy) {
+  button.classList.toggle('is-busy', busy);
+  button.disabled = busy;
+}
+
 let toastTimer = null;
 function toast(message, bad = false) {
   const el = $('toast');
@@ -299,7 +312,7 @@ async function doLogin(event) {
     return;
   }
 
-  button.disabled = true;
+  setBusy(button, true);
   error.textContent = '';
   try {
     // The one endpoint that takes no credential, so it is called directly.
@@ -319,7 +332,7 @@ async function doLogin(event) {
   } catch (err) {
     error.textContent = err.message;
   } finally {
-    button.disabled = false;
+    setBusy(button, false);
   }
 }
 
@@ -534,6 +547,29 @@ async function removeConn(id) {
 }
 
 /**
+ * Is this an address the hub could plausibly be listening on?
+ *
+ * The hub binds to **one** interface — by default the machine's Tailscale address —
+ * so reaching a server at its public IP is not a firewall problem to work through,
+ * it is simply the wrong address. Worth saying, because the generic "no answer"
+ * message sends you to check Tailscale and the service, both of which are fine.
+ *
+ * A tailnet address is the 100.64.0.0/10 CGNAT range or a `*.ts.net` MagicDNS name.
+ * Loopback and private LAN ranges are legitimate too, as is any hostname.
+ */
+function isPublicIPv4(host) {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  if (!m) return false; // a name, not an address — nothing to judge
+  const [a, b] = [Number(m[1]), Number(m[2])];
+  if (a === 127 || a === 10) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false; // tailnet
+  if (a === 192 && b === 168) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 169 && b === 254) return false;
+  return true;
+}
+
+/**
  * Add a server: the credentials are checked against it before anything is stored,
  * so a saved server is always one that worked at least once.
  */
@@ -556,7 +592,7 @@ async function addServer(event) {
     return;
   }
 
-  button.disabled = true;
+  setBusy(button, true);
   error.textContent = '';
   try {
     const res = await fetch(`http://${host}:${port}/api/login`, {
@@ -575,15 +611,18 @@ async function addServer(event) {
     await selectConn(`${host}:${port}`);
     toast(`Added ${label}`);
   } catch (err) {
-    // A cross-origin failure and an unreachable host look the same to fetch.
-    error.textContent =
-      err.name === 'TimeoutError'
-        ? `No answer from ${host}:${port}. Is Tailscale on, and the hub running?`
-        : err.message === 'Failed to fetch'
-          ? `Cannot reach ${host}:${port}. Check the address, Tailscale, and that the hub is running.`
-          : err.message;
+    // A cross-origin failure and an unreachable host look the same to fetch, so the
+    // message has to cover both without claiming to know which.
+    const unreachable = err.name === 'TimeoutError' || err.message === 'Failed to fetch';
+    error.textContent = !unreachable
+      ? err.message
+      : isPublicIPv4(host)
+        ? `No answer from ${host}:${port}. That is a public address, and the hub `
+          + `listens on one interface only — its Tailscale address. Try the machine's `
+          + `100.x.y.z address, or its <name>.ts.net.`
+        : `No answer from ${host}:${port}. Is Tailscale on, and the hub running?`;
   } finally {
-    button.disabled = false;
+    setBusy(button, false);
   }
 }
 
