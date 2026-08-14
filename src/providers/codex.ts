@@ -21,7 +21,7 @@
  */
 
 import { listCommands, type CommandCatalogue, type SlashCommand } from '../commands.js';
-import { launchInTmux, settleStartup, tmuxSafeName } from '../create.js';
+import { launchInTmux, resolveBinary, settleStartup, tmuxSafeName } from '../create.js';
 import type { Executor } from '../exec.js';
 import { enrichAgentProcs, findAgentInPane, type Probe } from '../proc.js';
 import { q } from '../shell.js';
@@ -638,16 +638,33 @@ async function detail(exec: Executor, session: SessionInfo): Promise<SessionDeta
 const TRUST_PROMPT = /Do you trust the contents of this directory|Yes, continue/i;
 const READY_HINT = /OpenAI Codex|\/model to change|Run \/review/;
 
+/** Where a Codex install lives when it is not on PATH. */
+const CODEX_PATHS = ['"$HOME"/.local/bin/codex', '"$HOME"/.codex/packages/standalone/current/bin/codex'];
+
 async function create(
   exec: Executor,
   _serverId: string,
   dir: string,
   bypass: boolean,
 ): Promise<CreateResult> {
+  /*
+   * The absolute path, not the bare name. Codex installs to `~/.local/bin`, which is
+   * on an interactive shell's PATH via `.zshrc` and on the hub's PATH not at all — so
+   * `zsh -lc codex` died with "command not found" and, because `tmux new-session -d`
+   * succeeds regardless, produced a session that silently never existed.
+   */
+  const bin = await resolveBinary(exec, 'codex', CODEX_PATHS);
+  if (!bin) {
+    throw new Error(
+      'codex is not installed, or its binary could not be found (looked on PATH, ' +
+        'in ~/.local/bin and in ~/.codex/packages)',
+    );
+  }
+
   // No `--session-id` equivalent exists, and none is needed: the process names its
   // own rollout on an fd, so the mapping is read rather than arranged in advance.
   const name = tmuxSafeName(dir, Math.random().toString(16).slice(2, 6));
-  const inner = 'codex' + (bypass ? ' --dangerously-bypass-approvals-and-sandbox' : '');
+  const inner = q(bin) + (bypass ? ' --dangerously-bypass-approvals-and-sandbox' : '');
 
   const spec = {
     dir,
@@ -747,6 +764,12 @@ export const codexProvider: Provider = {
    */
   clearKey: 'C-u',
 
+  /*
+   * Deliberately looser than `resolveBinary`. Discovery of *existing* sessions needs
+   * no binary at all, so a Codex that is present but unlocatable should still have its
+   * sessions listed and read; only `create` requires the executable, and it says so
+   * with its own error.
+   */
   async available(exec: Executor, home: string): Promise<boolean> {
     const { code } = await exec.runShell(
       `command -v codex >/dev/null 2>&1 || [ -x ${q(`${home}/.local/bin/codex`)} ] ` +

@@ -106,6 +106,38 @@ export interface Launched {
 }
 
 /**
+ * Locate an agent's executable, as an absolute path.
+ *
+ * Never rely on PATH for the launch. The hub runs as a systemd user service whose PATH
+ * is the system default — no `~/.local/bin`, no nvm — and `zsh -lc` is a *login,
+ * non-interactive* shell, so `.zshrc` is not read either. A Codex install at
+ * `~/.local/bin/codex` is therefore invisible to `zsh -lc codex`, which exits
+ * instantly with "command not found".
+ *
+ * That failure is silent in the worst way: `tmux new-session -d` reports success
+ * whatever the command inside it does, so the session simply never existed and the
+ * only symptom was a create that returned no pane.
+ *
+ * `/proc/<pid>/exe` of an already-running instance is tried first — it is free, and
+ * authoritative about the binary actually in use.
+ */
+export async function resolveBinary(
+  exec: Executor,
+  comm: string,
+  candidates: readonly string[],
+): Promise<string | null> {
+  const script = [
+    `p=$(pgrep -x ${q(comm)} 2>/dev/null | head -n 1)`,
+    `[ -n "$p" ] && readlink -f "/proc/$p/exe" 2>/dev/null && exit 0`,
+    `command -v ${q(comm)} 2>/dev/null && exit 0`,
+    ...candidates.map((c) => `ls -1 ${c} 2>/dev/null | head -n 1 && exit 0`),
+    'exit 1',
+  ].join('\n');
+  const { stdout } = await exec.runShell(script, { timeoutMs: 10_000 });
+  return stdout.split('\n').map((l) => l.trim()).find((l) => l.startsWith('/')) ?? null;
+}
+
+/**
  * Start the session and wait for its process to exist.
  *
  * `tmux new-session` returns as soon as the pane's shell is forked, so an immediate
@@ -128,6 +160,7 @@ export async function launchInTmux(exec: Executor, spec: LaunchSpec): Promise<La
 
   let paneId: string | null = null;
   let home = '';
+  let lastScreen = '';
   for (let attempt = 0; attempt < 24; attempt += 1) {
     const p = await probe(exec);
     home = p.home;
@@ -140,10 +173,30 @@ export async function launchInTmux(exec: Executor, spec: LaunchSpec): Promise<La
         const [proc] = await enrichAgentProcs(exec, [agent.pid], p.now, etimes, spec.fdMatch);
         if (proc) return { paneId: proc.paneId, proc, home };
       }
+      // Keep the most recent screen: if this ends in failure it usually holds the
+      // shell's own complaint, which is the only useful thing to report.
+      const cap = await exec.runShell(
+        `tmux capture-pane -p -t ${q(pane.paneId)} 2>/dev/null || true`,
+      );
+      if (cap.stdout.trim()) lastScreen = cap.stdout;
     }
     await delay(500);
   }
-  return { paneId, proc: null, home };
+
+  /*
+   * The agent never appeared. Failing loudly beats returning a session with no pane:
+   * that left the client showing a conversation that did not exist, with nothing
+   * anywhere to say why.
+   */
+  const said = lastScreen
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(-3)
+    .join(' / ');
+  throw new Error(
+    `${spec.comms[0]} did not start in ${spec.dir}` + (said ? ` — the pane said: ${said}` : ''),
+  );
 }
 
 /** Git repos under the configured roots, for the create sheet's directory picker. */

@@ -14,7 +14,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { listCommands, type CommandCatalogue } from '../commands.js';
-import { launchInTmux, settleStartup, tmuxSafeName } from '../create.js';
+import { launchInTmux, resolveBinary, settleStartup, tmuxSafeName } from '../create.js';
 import type { Executor } from '../exec.js';
 import { claudeDetail } from '../info.js';
 import { enrichAgentProcs, findAgentInPane, type Probe } from '../proc.js';
@@ -736,10 +736,24 @@ async function create(
   dir: string,
   bypass: boolean,
 ): Promise<CreateResult> {
+  // Absolute path for the same reason as Codex: an nvm-installed `claude` is on the
+  // hub's PATH only by luck. It happens to be in /usr/local/bin on this host, which is
+  // precisely why this hazard stayed hidden until a second agent arrived.
+  const bin = await resolveBinary(exec, 'claude', [
+    '"$HOME"/.local/bin/claude',
+    '"$HOME"/.nvm/versions/node/*/bin/claude',
+  ]);
+  if (!bin) {
+    throw new Error(
+      'claude is not installed, or its binary could not be found (looked on PATH, ' +
+        'in ~/.local/bin and under ~/.nvm)',
+    );
+  }
+
   const uuid = randomUUID();
   const name = tmuxSafeName(dir, uuid);
   const inner =
-    `claude --session-id ${uuid}` + (bypass ? ' --dangerously-skip-permissions' : '');
+    `${q(bin)} --session-id ${uuid}` + (bypass ? ' --dangerously-skip-permissions' : '');
 
   const spec = {
     dir,

@@ -435,8 +435,20 @@ Three Android details that would each have silently broken a release build:
   session must still be listable, or it is unreachable by `send`.
 - `zsh -lc claude` **exec's** into claude, so for app-created sessions the pane's own
   process *is* claude; there is no child to find under `pane_pid`.
-- If `claude` is on `PATH` only via `.zshrc`, a tmux-launched `zsh -lc claude` will not
-  find it — `.zshrc` is for interactive shells. Put it in `.zprofile`.
+- If an agent is on `PATH` only via `.zshrc`, a tmux-launched `zsh -lc <agent>` will not
+  find it — `.zshrc` is for interactive shells. Both providers therefore resolve their
+  binary to an **absolute path** before launching, rather than trusting PATH.
+
+  This is worth understanding rather than just copying, because the failure is invisible:
+  the hub runs as a systemd user service whose PATH is the system default, so a Codex at
+  `~/.local/bin/codex` cannot be found, and **`tmux new-session -d` reports success
+  whatever the command inside it does**. The pane printed "command not found" and died,
+  the create returned a session with no pane, and nothing anywhere said why. Claude Code
+  happened to be in `/usr/local/bin` on the machine this was built on, which is exactly
+  why the hazard stayed hidden until a second agent arrived.
+
+  A launch that never produces an agent process now throws, quoting the last few lines
+  of the pane — which is where the shell's own complaint is.
 - The directory trust prompt blocks startup and `--dangerously-skip-permissions` does
   **not** skip it. The hub detects and answers it, which is only acceptable because the
   directory came from the user's own picker.
