@@ -189,11 +189,15 @@ default.
   it. See below for where the list comes from.
 - **Key bar** — `esc`, `^C`, arrows, `tab`, `enter`, plus `screen` (peek at the raw pane)
   and `conversation` (fix a wrong transcript match).
-- **Screenshot** — 🖼 sends an image; whatever is in the compose box becomes its caption.
+- **Screenshot** — the picture button sends an image; on a desktop you can also drag one
+  onto the conversation or paste it from the clipboard. Whatever is in the compose box
+  becomes the caption.
 - **ⓘ** — model, effort, context tokens, branch, turn counts, uptime, and the pane's own
   status line scraped verbatim.
 - **☰** — server browser, and **Help & commands**: what everything does, plus every
-  command this session accepts.
+  command this session accepts. Each server can be renamed — the hub that served the
+  page adds itself automatically and only knows its own address, so it starts out called
+  `100.x.y.z`. Signing in again refreshes the token and keeps the name.
 - **↓** — appears while scrolled up, and turns orange when something arrives while you
   are reading back. The view never jumps to the bottom on its own.
 
@@ -347,11 +351,14 @@ CC_URL=http://100.x.y.z:7420 node scripts/screenshot.mjs --scene cmd --size 1280
 ```
 
 Headless Chrome over the DevTools protocol — navigate, click, screenshot, and print what
-the DOM measured. The measurements matter more than the picture: a sidebar that renders
-wrong is obvious as `list: [0, 0, 1113, 668]` and easy to talk yourself out of by eye.
-Scenes cover the list, a chat, the command menu, the hint, an unknown command, the drawer
-and both help tabs. Chrome is found in the puppeteer cache or via `$CHROME`; nothing is
-installed.
+the DOM measured. The measurements matter more than the picture, in both directions: a
+sidebar that renders wrong is obvious as `list: [0, 0, 1113, 668]` and easy to talk
+yourself out of by eye, and a drop overlay that *looked* far too pale turned out to be
+exactly right (`[96, 98, 102]` against a `[246, 248, 252]` sidebar). Scenes cover the
+list, a chat, the command menu and hint, an unknown command, the drawer, both help tabs,
+the add-server and rename modals, and the drag-and-drop overlay. `--theme dark|light`
+forces a palette, which is the only way to check the one your system is not set to.
+Chrome is found in the puppeteer cache or via `$CHROME`; nothing is installed.
 
 Android client:
 
@@ -394,6 +401,15 @@ Three Android details that would each have silently broken a release build:
 - A flex item will not shrink below its content unless given `min-width: 0`. One long
   `cwd` in the sidebar made it 1113 px wide instead of 340, and `flex: 0 0 340px` looked
   like it should have prevented exactly that.
+- A `<textarea>` with `overflow: auto` reserves a scrollbar gutter as soon as its content
+  approaches its height, so an autogrowing one shows a permanent track on a single line.
+  Keep it `hidden` and switch to `auto` only once the height is clamped.
+- `.ghost` lost to `.add-form button` — a bare class is less specific than a class plus an
+  element, so the "cancel" button came out filled with the accent, identical to the
+  primary beside it. `button.ghost` is the fix.
+- The drawer is `z-index: 25` and sheets are `20`, so a modal opened *from* the drawer
+  rendered beneath the drawer's own scrim and looked like a theme bug. Close the drawer
+  first, as the help sheet already did.
 - Typing a slash command opens the TUI's *own* completion menu. Verified before building
   on it: one `Enter` still submits, and typing a space closes the menu first — so
   `send-keys` needs no special case. Worth re-checking if it ever starts eating sends.

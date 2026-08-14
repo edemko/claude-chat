@@ -35,6 +35,9 @@ const arg = (name, fallback) => {
 
 const [width, height] = arg('size', '1280x860').split('x').map(Number);
 const scene = arg('scene', 'list');
+// Every new surface consumes the palette, and the palette has three states. Forcing
+// one is the only way to check the other without a system-wide setting.
+const theme = arg('theme', null);
 const out = arg('out', `claude-chat-${scene}.png`);
 const port = Number(arg('port', '9412'));
 
@@ -157,6 +160,32 @@ const SCENES = {
   drawer: async () => {
     await evaluate(`document.getElementById('btn-menu').click(); 'ok'`);
   },
+  addserver: async () => {
+    await evaluate(`document.getElementById('btn-menu').click();
+                    document.getElementById('btn-add-quick').click(); 'ok'`);
+  },
+  rename: async () => {
+    await evaluate(`document.getElementById('btn-menu').click(); 'ok'`);
+    await sleep(300);
+    await evaluate(`document.querySelector('.conn-edit').click(); 'ok'`);
+  },
+  drop: async () => {
+    await openFirstSession();
+    // A synthetic drag: what matters is that the veil is gated on a *file* drag and
+    // that the depth counter leaves it steady, both of which are pure JS.
+    await evaluate(`
+      (() => {
+        const dt = new DataTransfer();
+        dt.items.add(new File(['x'], 'shot.png', { type: 'image/png' }));
+        window.dispatchEvent(new DragEvent('dragenter', { dataTransfer: dt, bubbles: true }));
+        return 'ok';
+      })()
+    `);
+  },
+  longmsg: async () => {
+    await openFirstSession();
+    await typeInto('a single line, which must not show a scrollbar');
+  },
   help: async () => {
     await evaluate(`document.getElementById('btn-menu').click();
                     document.getElementById('btn-help').click(); 'ok'`);
@@ -178,7 +207,15 @@ if (!SCENES[scene]) {
 await send('Page.enable');
 await send('Runtime.enable');
 await send('Page.navigate', { url: `${base}/?t=${encodeURIComponent(token)}` });
-await sleep(3500);
+await sleep(1200);
+if (theme) {
+  // Stored, then reloaded: the theme is applied by an inline script before first
+  // paint, so setting it live would not exercise the same path.
+  await evaluate(`localStorage.setItem('cc-theme', ${JSON.stringify(theme)}); 'ok'`);
+  await send('Page.reload');
+  await sleep(2000);
+}
+await sleep(2300);
 
 // The hub binds to its tailnet address, not loopback, so the default URL is wrong as
 // often as not. Say that, rather than failing later on a null element.
@@ -217,6 +254,18 @@ const report = await evaluate(`JSON.stringify({
     ? null : document.getElementById('cmd-hint').textContent,
   token: document.querySelector('.cmd-tok')?.className ?? null,
   jumpShown: !document.getElementById('btn-bottom').hidden,
+  composeOverflowY: getComputedStyle(document.getElementById('compose')).overflowY,
+  composeScrolls: (() => {
+    const c = document.getElementById('compose');
+    return c.scrollHeight > c.clientHeight;
+  })(),
+  dropVeil: !document.getElementById('drop-veil').hidden,
+  dropVeilPaint: (() => {
+    const v = document.getElementById('drop-veil');
+    const cs = getComputedStyle(v);
+    const r = v.getBoundingClientRect();
+    return { bg: cs.backgroundColor, z: cs.zIndex, box: [Math.round(r.width), Math.round(r.height)] };
+  })(),
   // These two must be identical: the highlight layer sits on top of the real text.
   mirrorBox: ${box('compose-mirror')},
   textareaBox: ${box('compose')},

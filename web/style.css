@@ -508,6 +508,10 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   background: none;
   color: var(--text);
   position: relative;
+  /* A textarea with `overflow: auto` reserves a scrollbar gutter as soon as its
+     content is near its height, so it shows a track on a one-line message. autogrow
+     turns scrolling back on only once the field is actually clamped at its maximum. */
+  overflow-y: hidden;
 }
 .compose-field textarea:focus { outline: none; }
 .compose-field textarea::placeholder { color: var(--muted); }
@@ -745,13 +749,11 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
   padding: 12px var(--pad) calc(16px + var(--safe-b));
   border-top: 1px solid var(--line);
 }
-/* Dashed reads as "add one"; help is a place that already exists. */
-.drawer-foot .ghost { border-style: solid; background: var(--panel); }
 .drawer-foot button {
   width: 100%;
   padding: 13px;
   border-radius: 11px;
-  border: 1px dashed var(--line);
+  border: 1px solid var(--line);
   color: var(--text);
   font-size: 15px;
   font-weight: 560;
@@ -1278,3 +1280,180 @@ code[data-copy='inline'].is-copied {
   }
   .topbar { padding-top: 14px; }
 }
+
+/* ---------- scrollbars ---------- */
+
+/*
+ * The default scrollbar is a wide grey slab in the browser's colours, which on a
+ * dark theme reads as a rendering fault. Overlay-thin, in the app's own line colour,
+ * and transparent until there is something to scroll.
+ *
+ * Both syntaxes are needed: the standard properties for Firefox, the -webkit- ones
+ * for Chrome and Safari, which ignore them.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  /* A transparent border plus content-box clipping is what insets the thumb — there
+     is no padding or margin on a scrollbar thumb. */
+  background: var(--line);
+  background-clip: content-box;
+  border: 3px solid transparent;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: content-box; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---------- icons ---------- */
+
+/*
+ * Line icons at the text colour, so one rule themes them. Emoji were the wrong
+ * choice here: 🖼 renders as a period-piece framed photo on Android and as a
+ * completely different object on every other platform.
+ */
+.ico {
+  width: 21px;
+  height: 21px;
+  display: block;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+/* The sun in the picture icon is the one filled shape. */
+.ico circle { fill: currentColor; stroke: none; }
+
+/* ---------- modals ---------- */
+
+/*
+ * A form you fill in and dismiss, rather than a list you browse. It is reached from a
+ * drawer already pinned to one edge, so a second edge-anchored panel reads as part of
+ * the drawer; centred, it reads as a decision to make.
+ */
+.sheet.is-modal {
+  justify-content: center;
+  align-items: center;
+  padding: var(--pad);
+}
+.sheet.is-modal .sheet-panel {
+  width: 100%;
+  max-width: 420px;
+  max-height: 88dvh;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding-bottom: 0;
+  box-shadow: 0 20px 60px var(--shadow);
+  animation: modal-in 140ms ease-out;
+}
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sheet.is-modal .sheet-panel { animation: none; }
+}
+
+.field-label {
+  margin: 6px 0 -4px;
+  font-size: 11px;
+  font-weight: 640;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.field-note { margin: -2px 0 0; }
+
+.modal-foot {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+.modal-foot button {
+  flex: 1;
+  margin-top: 0;
+  padding: 13px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* ---------- primary and ghost buttons ---------- */
+
+/*
+ * "Add a server" was a dashed outline — the same treatment as an empty drop target,
+ * which is not what a button that does the main thing should look like.
+ */
+.primary {
+  background: var(--you);
+  color: var(--on-you);
+  border: 1px solid var(--you);
+}
+.primary:active { filter: brightness(1.08); }
+.primary[disabled] { opacity: 0.45; }
+
+/*
+ * `.ghost` had no rule of its own — only `.browse-foot .ghost` and friends — so a
+ * ghost button anywhere new inherited its container's accent fill and came out
+ * looking exactly like the primary action beside it. This is the general case.
+ */
+/* `button.ghost`, not `.ghost`: it has to outrank rules like `.add-form button`,
+   which are more specific than a bare class and filled Cancel with the accent. */
+button.ghost {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+}
+button.ghost:active { background: var(--raised); }
+
+/* Rename, beside the remove control on each server row. */
+.conn-edit {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+}
+.conn-edit:active { background: var(--raised); color: var(--you); }
+.conn-edit .ico { width: 17px; height: 17px; }
+
+/* ---------- drag and drop ---------- */
+
+/*
+ * Only while a file is genuinely over the window — a veil that appears on any drag
+ * would fire when selecting text. `pointer-events: none` matters: the veil must not
+ * become the drop target itself, or the dragleave/drop pair fights with it.
+ */
+.drop-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pad);
+  /* Same scrim as the sheets, so an overlay always means the same thing. */
+  background: rgba(6, 8, 12, 0.62);
+  pointer-events: none;
+}
+.drop-veil[hidden] { display: none; }
+.drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 24px 28px;
+  border: 2px dashed var(--you);
+  border-radius: 16px;
+  background: var(--panel);
+  text-align: center;
+}
+.drop-card .ico { width: 34px; height: 34px; color: var(--you); }
+.drop-card strong { font-size: 15px; font-weight: 620; }
+.drop-card span { font-size: 12.5px; color: var(--muted); }

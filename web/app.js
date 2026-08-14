@@ -78,8 +78,15 @@ function activeConn() {
 function upsertConnection(conn) {
   const list = loadConnections();
   const at = list.findIndex((c) => c.host === conn.host && c.port === conn.port);
-  if (at >= 0) list[at] = { ...list[at], ...conn };
-  else list.push(conn);
+  if (at >= 0) {
+    const existing = list[at];
+    // Signing in again refreshes the token, not the name. Without this, a server the
+    // user renamed reverted to its bare address the next time the token expired.
+    const keepName = conn.label === undefined || conn.label === conn.host;
+    list[at] = { ...existing, ...conn, label: keepName ? existing.label : conn.label };
+  } else {
+    list.push(conn);
+  }
   saveConnections(list);
   setActive(conn.id);
 }
@@ -429,6 +436,20 @@ function connRow(conn) {
   pick.append(name, meta);
   pick.addEventListener('click', () => selectConn(conn.id));
 
+  const rename = document.createElement('button');
+  rename.type = 'button';
+  rename.className = 'conn-edit';
+  rename.setAttribute('aria-label', `Rename ${conn.label ?? conn.host}`);
+  rename.title = 'Rename';
+  rename.innerHTML =
+    '<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">' +
+    '<path d="M4 20h4l10-10a2.5 2.5 0 0 0-3.5-3.5L4.5 16.5V20z"/>' +
+    '<path d="M13.5 6.5L17.5 10.5"/></svg>';
+  rename.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openRename(conn.id);
+  });
+
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'conn-remove';
@@ -439,7 +460,7 @@ function connRow(conn) {
     removeConn(conn.id);
   });
 
-  row.append(pick, remove);
+  row.append(pick, rename, remove);
 
   // Fire-and-forget: the row renders immediately and fills in its status.
   void probeConn(conn).then((r) => {
@@ -549,7 +570,7 @@ async function addServer(event) {
 
     upsertConnection({ id: `${host}:${port}`, label, host, port, token: body.token });
     $('add-pass').value = '';
-    $('add-sheet').classList.remove('is-open');
+    closeAddServer();
     error.textContent = '';
     await selectConn(`${host}:${port}`);
     toast(`Added ${label}`);
@@ -566,21 +587,97 @@ async function addServer(event) {
   }
 }
 
+/* ---------- naming a server ---------- */
+
+/*
+ * A server is remembered by address and shown by name. The hub that served the page
+ * gets added automatically at first sign-in, and all it knows about itself then is
+ * `100.75.240.46` — so the list reads as a row of addresses until you can name them.
+ */
+let renamingId = null;
+
+function openRename(id) {
+  const conn = state.connections.find((c) => c.id === id);
+  if (!conn) return;
+  // The drawer sits above sheets in the stack, so its scrim would dim this modal.
+  closeDrawer();
+  renamingId = id;
+  $('name-input').value = conn.label ?? '';
+  $('name-where').textContent = `${conn.host}:${conn.port}`;
+  $('name-sheet').classList.add('is-open');
+  $('name-input').focus();
+  $('name-input').select();
+}
+
+function closeRename() {
+  renamingId = null;
+  $('name-sheet').classList.remove('is-open');
+}
+
+function saveRename(event) {
+  event.preventDefault();
+  const conn = state.connections.find((c) => c.id === renamingId);
+  if (!conn) return closeRename();
+  // Cleared means "no name" — fall back to the address rather than an empty row.
+  const name = $('name-input').value.trim();
+  saveConnections(
+    state.connections.map((c) => (c.id === conn.id ? { ...c, label: name || undefined } : c)),
+  );
+  closeRename();
+  const active = activeConn();
+  if (active) $('server-label').textContent = active.label ?? active.host;
+  // Back to the list you were editing, now showing the new name.
+  openDrawer();
+  toast(name ? `Renamed to ${name}` : 'Name cleared');
+}
+
+$('name-form').addEventListener('submit', saveRename);
+$('btn-name-close').addEventListener('click', closeRename);
+$('btn-name-cancel').addEventListener('click', closeRename);
+$('name-sheet').addEventListener('click', (e) => {
+  if (e.target === $('name-sheet')) closeRename();
+});
+
+function openAddServer() {
+  closeDrawer();
+  $('add-error').textContent = '';
+  $('add-port').value = $('add-port').value || '7420';
+  $('add-sheet').classList.add('is-open');
+  $('add-host').focus();
+}
+
+function closeAddServer() {
+  $('add-sheet').classList.remove('is-open');
+}
+
 $('btn-menu').addEventListener('click', openDrawer);
 $('btn-drawer-close').addEventListener('click', closeDrawer);
 $('drawer').addEventListener('click', (e) => {
   if (e.target === $('drawer')) closeDrawer();
 });
-$('btn-add-server').addEventListener('click', () => {
-  $('add-error').textContent = '';
-  $('add-port').value = $('add-port').value || '7420';
-  $('add-sheet').classList.add('is-open');
-});
-$('btn-add-close').addEventListener('click', () => $('add-sheet').classList.remove('is-open'));
+$('btn-add-server').addEventListener('click', openAddServer);
+// The same thing from the drawer's title bar, for when the list is long enough that
+// the footer button is a scroll away.
+$('btn-add-quick').addEventListener('click', openAddServer);
+$('btn-add-close').addEventListener('click', closeAddServer);
+$('btn-add-cancel').addEventListener('click', closeAddServer);
 $('add-sheet').addEventListener('click', (e) => {
-  if (e.target === $('add-sheet')) $('add-sheet').classList.remove('is-open');
+  if (e.target === $('add-sheet')) closeAddServer();
 });
 $('add-form').addEventListener('submit', addServer);
+
+// Esc closes whichever modal is on top. A centred dialog with no visible edge to tap
+// past needs a keyboard way out.
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  for (const id of ['name-sheet', 'add-sheet']) {
+    if ($(id).classList.contains('is-open')) {
+      $(id).classList.remove('is-open');
+      if (id === 'name-sheet') renamingId = null;
+      return;
+    }
+  }
+});
 
 /** Decide the opening screen: sign in when there is no server, otherwise the list. */
 async function routeStart() {
@@ -1027,8 +1124,14 @@ function connectWs(session) {
 const compose = $('compose');
 
 function autogrow() {
+  const max = window.innerHeight * 0.34;
   compose.style.height = 'auto';
-  compose.style.height = `${Math.min(compose.scrollHeight, window.innerHeight * 0.34)}px`;
+  const needed = compose.scrollHeight;
+  compose.style.height = `${Math.min(needed, max)}px`;
+  // Only allow scrolling once the field is actually clamped. Left on `auto`, the
+  // textarea reserves a scrollbar gutter as soon as its content approaches its
+  // height, so a one-line message showed a permanent track.
+  compose.style.overflowY = needed > max ? 'auto' : 'hidden';
   $('btn-send').disabled = compose.value.trim().length === 0;
 }
 
@@ -1434,6 +1537,76 @@ $('pick-image').addEventListener('change', (e) => {
   // Cleared so picking the same file twice still fires a change event.
   e.target.value = '';
   if (file) void sendImage(file);
+});
+
+/* ---------- drag, drop and paste ---------- */
+
+/*
+ * Dropping a screenshot straight onto the conversation.
+ *
+ * Two things make this fiddly. A drop anywhere the page has not claimed makes the
+ * browser *navigate to the file*, losing the session — so the window-level handlers
+ * cancel every drag regardless of where it lands. And dragenter/dragleave fire for
+ * each element the pointer crosses, which flickers a naive overlay; a depth counter
+ * is what makes it steady.
+ */
+let dragDepth = 0;
+
+/** True only for an actual file drag — not text selection, not a dragged link. */
+const isFileDrag = (e) =>
+  Array.from(e.dataTransfer?.types ?? []).includes('Files');
+
+function showDropVeil(on) {
+  if (!on) dragDepth = 0;
+  $('drop-veil').hidden = !on;
+}
+
+window.addEventListener('dragenter', (e) => {
+  if (!isFileDrag(e)) return;
+  e.preventDefault();
+  dragDepth += 1;
+  if (state.session) showDropVeil(true);
+});
+
+window.addEventListener('dragover', (e) => {
+  if (!isFileDrag(e)) return;
+  // Required on every dragover, not just dragenter: without it the drop event never
+  // fires and the browser opens the file instead.
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+});
+
+window.addEventListener('dragleave', (e) => {
+  if (!isFileDrag(e)) return;
+  dragDepth -= 1;
+  if (dragDepth <= 0) showDropVeil(false);
+});
+
+window.addEventListener('drop', (e) => {
+  if (!isFileDrag(e)) return;
+  // Cancel even when there is nowhere to put it, so a stray drop cannot navigate.
+  e.preventDefault();
+  showDropVeil(false);
+  const file = e.dataTransfer?.files?.[0];
+  if (!file) return;
+  if (!state.session) {
+    toast('Open a session first, then drop the image.', true);
+    return;
+  }
+  void sendImage(file);
+});
+
+// Ctrl-V a screenshot. On a desktop this is how one arrives — straight off the
+// clipboard, with no file on disk to pick from.
+compose.addEventListener('paste', (e) => {
+  const item = Array.from(e.clipboardData?.items ?? []).find(
+    (i) => i.kind === 'file' && i.type.startsWith('image/'),
+  );
+  if (!item) return; // ordinary text paste
+  const file = item.getAsFile();
+  if (!file || !state.session) return;
+  e.preventDefault();
+  void sendImage(file);
 });
 
 for (const key of document.querySelectorAll('.key[data-key]')) {
