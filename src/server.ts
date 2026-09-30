@@ -27,6 +27,7 @@ import { StreamHub } from './stream.js';
 import { historyPage } from './transcript.js';
 import { UploadError, storeUpload, uploadMessage } from './upload.js';
 import type { ServerConfig, SessionInfo } from './types.js';
+import { checkMessage, checkSessionName } from './validate.js';
 
 const WEB_ROOT = resolve(fileURLToPath(new URL('.', import.meta.url)), '..', 'web');
 const TOKEN = getToken();
@@ -427,14 +428,15 @@ async function handleApi(
     return sendJson(res, 200, { session, ...page });
   }
 
-  // POST .../sessions/:uuid/send  {text}
+  // POST .../sessions/:uuid/send  {text}   (≤ MESSAGE_MAX = 100 000 chars; see validate.ts)
   if (action === 'send' && method === 'POST') {
-    const body = (await readBody(req)) as { text?: unknown };
-    if (typeof body.text !== 'string' || !body.text.trim()) {
-      throw new HttpError(400, 'text is required');
-    }
+    // 1 MiB, not the default 256 KiB: MESSAGE_MAX characters can take up to 4 bytes
+    // each, and the per-field check below gives the clearer error.
+    const body = (await readBody(req, 1024 * 1024)) as { text?: unknown };
+    const text = checkMessage(body.text);
+    if (!text.ok) throw new HttpError(400, text.error);
     const session = await sessions.get(serverId, uuid);
-    await sendText(exec, session.paneId, body.text);
+    await sendText(exec, session.paneId, text.value);
     return sendJson(res, 200, { ok: true });
   }
 
@@ -462,7 +464,7 @@ async function handleApi(
   }
 
   /*
-   * POST .../sessions/:uuid/name  {name}
+   * POST .../sessions/:uuid/name  {name}   (≤ SESSION_NAME_MAX = 120 chars, one line)
    *
    * Stored hub-side rather than pushed into the agent, because the two disagree about
    * where a name lives — Claude Code writes a transcript record, Codex writes only to
@@ -472,12 +474,13 @@ async function handleApi(
    */
   if (action === 'name' && method === 'POST') {
     const body = (await readBody(req)) as { name?: unknown };
-    if (typeof body.name !== 'string') throw new HttpError(400, 'name is required');
-    const trimmed = body.name.trim().slice(0, 120);
+    // Too long or multi-line is refused with a 400, never cut to fit.
+    const name = checkSessionName(body.name);
+    if (!name.ok) throw new HttpError(400, name.error);
     const session = await sessions.get(serverId, uuid);
-    setName(serverId, session.uuid, session.paneId, trimmed || null);
+    setName(serverId, session.uuid, session.paneId, name.value);
     sessions.invalidate(serverId);
-    return sendJson(res, 200, { ok: true, name: trimmed || null });
+    return sendJson(res, 200, { ok: true, name: name.value });
   }
 
   /*

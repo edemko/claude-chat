@@ -279,7 +279,9 @@
     <form id="sname-form" class="add-form">
       <label class="field-label" for="sname-input">Name</label>
       <input id="sname-input" type="text" placeholder="e.g. tracking feature"
-             autocapitalize="sentences" autocomplete="off">
+             autocapitalize="sentences" autocomplete="off" maxlength="120"
+             aria-describedby="sname-count">
+      <p id="sname-count" class="field-note meta" aria-live="polite"></p>
       <p id="sname-note" class="field-note meta"></p>
       <div class="modal-foot">
         <button id="btn-sname-clear" type="button" class="ghost">Clear</button>

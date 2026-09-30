@@ -304,6 +304,14 @@ context. Multi-line text goes through `load-buffer` + `paste-buffer -p` so newli
 submit early. Every send re-checks that the pane is still running claude — otherwise the
 text would land in a shell prompt and execute.
 
+**Field limits** — each text field has its own limit, refused with a 400 `{error}` that
+the client shows, never silently cut (`src/validate.ts`). A message (`POST …/send`) is at
+most **100 000 characters**, sent verbatim, and may contain tab/newline/CR but no other
+control characters (ESC would reach the terminal as a key). A session name
+(`POST …/name`) is trimmed and NFC-normalised, one line, at most **120 characters**; empty
+clears it. Lengths are Unicode code points. The whole-body cap (256 KiB, 1 MiB for
+`/send`) only guards memory.
+
 **Creating** — `tmux new-session -d -c <dir> "zsh -lc 'claude --session-id <uuid>'"`.
 Generating the uuid up front makes the pane→transcript mapping exact by construction.
 
@@ -394,6 +402,7 @@ node scripts/test-discovery.mjs    # dedupe + status-line scraping, no server ne
 node scripts/test-markdown.mjs     # markdown renderer against a DOM stub
 node scripts/test-commands.mjs     # slash-command parsing and ranking
 node scripts/test-codex.mjs        # Codex record shapes, against real fixtures
+node scripts/test-validate.mjs     # per-field limits (names, messages)
 node scripts/smoke-ws.mjs          # end-to-end live stream, throwaway session
 ```
 

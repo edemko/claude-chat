@@ -1389,6 +1389,7 @@ code[data-copy='inline'].is-copied {
   color: var(--muted);
 }
 .field-note { margin: -2px 0 0; }
+.field-note.is-bad { color: var(--bad); }
 
 .modal-foot {
   display: flex;

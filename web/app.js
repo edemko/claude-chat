@@ -1230,10 +1230,21 @@ $('menu-sheet').addEventListener('click', (e) => {
  * session, which would land in the conversation. A hub-side name behaves the same for
  * both and takes effect on the next poll.
  */
+/** Matches SESSION_NAME_MAX in src/validate.ts; the hub refuses longer with a 400. */
+const SESSION_NAME_MAX = 120;
+
+function updateSessionNameCount() {
+  const len = [...$('sname-input').value.trim()].length;
+  const el = $('sname-count');
+  el.textContent = `${len} / ${SESSION_NAME_MAX}`;
+  el.classList.toggle('is-bad', len >= SESSION_NAME_MAX);
+}
+
 function openSessionRename(session) {
   menuSession = session;
   const input = $('sname-input');
   input.value = session.titleIsCustom ? session.title : '';
+  updateSessionNameCount();
   input.placeholder = session.title;
   $('sname-note').textContent =
     `${PROVIDER_LABEL[session.provider] ?? session.provider} · ${shortPath(session.cwd)}`;
@@ -1276,6 +1287,7 @@ $('sname-form').addEventListener('submit', (e) => {
   e.preventDefault();
   void saveSessionName($('sname-input').value.trim());
 });
+$('sname-input').addEventListener('input', updateSessionNameCount);
 $('btn-sname-clear').addEventListener('click', () => void saveSessionName(''));
 $('btn-sname-close').addEventListener('click', closeSessionRename);
 $('sname-sheet').addEventListener('click', (e) => {
